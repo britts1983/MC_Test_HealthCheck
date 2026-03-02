@@ -1,35 +1,53 @@
 pipeline {
     agent any
 
+    options {
+        timestamps()
+    }
+
     stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
 
         stage('Setup Python') {
             steps {
                 sh '''
-                python3 -m venv venv
-                . venv/bin/activate
-                pip install -r requirements.txt
+                    python3 -m venv venv
+                    . venv/bin/activate
+                    python -m pip install --upgrade pip
+                    pip install -r requirements.txt
                 '''
             }
         }
 
-        sstage('Run Test') {
-  steps {
-    sh '''
-      . venv/bin/activate
-      mkdir -p artifacts
-      PYTHONPATH=src
-      python src/run.py --headless
+        stage('Run Test') {
+            steps {
+                sh '''
+                    . venv/bin/activate
+                    mkdir -p artifacts
 
-      # Fail build if report not generated
-      test -f artifacts/health_report.html
-    '''
-  }
-}
+                    # IMPORTANT: your current run works with this style
+                    PYTHONPATH=src python src/run.py --headless
+
+                    # Fail build if report not generated (prevents "false green")
+                    test -f artifacts/health_report.html
+                '''
+            }
+        }
 
         stage('Archive Report') {
-  steps {
-    archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true, fingerprint: true
-  }
-}
+            steps {
+                archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true, fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline finished"
+        }
+    }
 }
