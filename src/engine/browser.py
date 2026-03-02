@@ -1,24 +1,29 @@
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 
-def create_driver(headless: bool, timeout_sec: int):
-    options = webdriver.ChromeOptions()
+def create_driver(headless: bool = True, timeout_sec: int = 60):
 
-    options.add_argument("--incognito")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-
-    # IMPORTANT for some CI/mac environments
-    options.add_argument("--remote-debugging-port=9222")
+    chrome_options = Options()
 
     if headless:
-        options.add_argument("--headless=new")
+        chrome_options.add_argument("--headless=new")
 
-    driver = webdriver.Chrome(options=options)
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_argument("--disable-notifications")
+    chrome_options.add_argument("--remote-allow-origins=*")
+
+    service = Service(ChromeDriverManager().install())
+
+    driver = webdriver.Chrome(service=service, options=chrome_options)
 
     driver.set_page_load_timeout(timeout_sec)
-    driver.set_script_timeout(timeout_sec)
 
     return driver
