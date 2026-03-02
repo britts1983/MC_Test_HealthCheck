@@ -63,3 +63,6 @@ def generate_report(status, duration, env):
 
     print("Status:", status)
     print("Duration:", duration)
+
+if __name__ == "__main__":
+    main()

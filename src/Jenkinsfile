@@ -13,20 +13,23 @@ pipeline {
             }
         }
 
-        stage('Run Test') {
-            steps {
-                sh '''
-                . venv/bin/activate
-                mkdir -p artifacts
-                PYTHONPATH=src python src/run.py --headless
-                '''
-            }
-        }
+        sstage('Run Test') {
+  steps {
+    sh '''
+      . venv/bin/activate
+      mkdir -p artifacts
+      PYTHONPATH=src
+      python src/run.py --headless
+
+      # Fail build if report not generated
+      test -f artifacts/health_report.html
+    '''
+  }
+}
 
         stage('Archive Report') {
-            steps {
-                archiveArtifacts artifacts: 'artifacts/*', allowEmptyArchive: true
-            }
-        }
-    }
+  steps {
+    archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true, fingerprint: true
+  }
+}
 }
