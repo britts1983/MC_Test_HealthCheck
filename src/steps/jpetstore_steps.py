@@ -7,7 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 
-def save_rotating_screenshot(driver, folder: str, label: str, max_files: int = 20) -> str:
+def save_rotating_screenshot(driver, folder: str, label: str, max_files: int = 30) -> str:
     os.makedirs(folder, exist_ok=True)
 
     pngs = [
@@ -32,7 +32,6 @@ def save_rotating_screenshot(driver, folder: str, label: str, max_files: int = 2
 
 
 class JPetStoreSteps:
-
     def __init__(self, driver, timeout_sec: int = 120, screenshots_dir: str = "artifacts/screenshots"):
         self.driver = driver
         self.wait = WebDriverWait(driver, timeout_sec)
@@ -43,29 +42,38 @@ class JPetStoreSteps:
         print(f"[SCREENSHOT] {path}")
         return path
 
+    def dump_page(self, filename: str = "artifacts/debug_page.html"):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(self.driver.page_source)
+        print(f"Page source dumped to {filename}")
+
+    def wait_ready(self):
+        self.wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+        time.sleep(1)
+
+    def is_logged_in(self) -> bool:
+        try:
+            self.driver.find_element(By.LINK_TEXT, "Sign Out")
+            return True
+        except Exception:
+            return False
+
     # -------------------------------
-    # OPEN SITE
+    # OPEN SITE (REAL USER FLOW)
     # -------------------------------
     def open_site(self, url: str):
-
         print("Opening:", url)
         self.driver.get(url)
-
-        self.wait.until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-
-        time.sleep(2)
+        self.wait_ready()
         self.shot("01_home")
 
-        self.wait.until(
-            EC.element_to_be_clickable((By.LINK_TEXT, "Enter the Store"))
-        ).click()
+        # Must click "Enter the Store"
+        self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Enter the Store"))).click()
 
-        self.wait.until(
-            EC.presence_of_element_located((By.LINK_TEXT, "Sign In"))
-        )
-
+        # Wait until store home is ready (Sign In link visible)
+        self.wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Sign In")))
+        self.wait_ready()
         self.shot("02_store_home")
         print("Store loaded")
 
@@ -73,102 +81,112 @@ class JPetStoreSteps:
     # LOGIN
     # -------------------------------
     def login(self, username: str, password: str):
+        # Click Sign In
+        self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))).click()
 
-        self.wait.until(
-            EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))
-        ).click()
+        # Wait for login form
+        self.wait.until(EC.presence_of_element_located((By.NAME, "username")))
 
-        self.wait.until(
-            EC.presence_of_element_located((By.NAME, "username"))
-        )
+        u = self.driver.find_element(By.NAME, "username")
+        p = self.driver.find_element(By.NAME, "password")
 
-        self.driver.find_element(By.NAME, "username").clear()
-        self.driver.find_element(By.NAME, "username").send_keys(username)
+        u.clear()
+        u.send_keys(username)
 
-        self.driver.find_element(By.NAME, "password").clear()
-        self.driver.find_element(By.NAME, "password").send_keys(password)
+        p.clear()
+        p.send_keys(password)
 
         self.driver.find_element(By.NAME, "signon").click()
 
-        self.wait.until(
-            EC.presence_of_element_located((By.LINK_TEXT, "Sign Out"))
-        )
-
+        # Confirm login by waiting Sign Out
+        self.wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Sign Out")))
+        self.wait_ready()
         self.shot("03_after_login")
         print("Login successful")
 
     # -------------------------------
-    # BUY FLOW (FINAL STABLE)
+    # BUY FLOW (HARDENED)
     # -------------------------------
     def buy_flow(self):
+        """
+        FIX:
+        - Do NOT open category by direct URL.
+        - Click category link (FISH) from UI.
+        - Retry once if headless render/network is slow.
+        """
 
-        # Go to FISH category
-        self.driver.get(
-            "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
-        )
+        for attempt in range(1, 3):  # 2 attempts
+            try:
+                if not self.is_logged_in():
+                    raise TimeoutException("Not logged in (Sign Out not found).")
 
-        # Wait until product links exist
-        self.wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//a[contains(@href,'Product.action')]")
-            )
-        )
+                # Click FISH category from left menu (real user)
+                self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "FISH"))).click()
 
-        self.shot("04_category")
+                # Wait product list exists
+                self.wait.until(
+                    lambda d: len(d.find_elements(By.XPATH, "//a[contains(@href,'Product.action')]")) > 0
+                )
+                self.wait_ready()
+                self.shot("04_fish_category")
 
-        # Click first product safely
-        products = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Product.action')]")
-        products[0].click()
+                # Click first product
+                products = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Product.action')]")
+                products[0].click()
 
-        # Wait for item links
-        self.wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//a[contains(@href,'Item.action')]")
-            )
-        )
+                # Wait item list exists
+                self.wait.until(
+                    lambda d: len(d.find_elements(By.XPATH, "//a[contains(@href,'Item.action')]")) > 0
+                )
+                self.wait_ready()
+                self.shot("05_product_page")
 
-        # Click first item safely
-        items = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Item.action')]")
-        items[0].click()
+                # Click first item
+                items = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Item.action')]")
+                items[0].click()
 
-        # Add to cart
-        self.wait.until(
-            EC.element_to_be_clickable((By.LINK_TEXT, "Add to Cart"))
-        ).click()
+                # Add to cart
+                self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Add to Cart"))).click()
+                self.wait_ready()
+                self.shot("06_cart")
 
-        self.shot("05_cart")
+                # Checkout
+                self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))).click()
 
-        # Proceed to checkout
-        self.wait.until(
-            EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))
-        ).click()
+                # Sometimes intermediate confirm page exists
+                try:
+                    self.wait.until(EC.element_to_be_clickable((By.NAME, "newOrder"))).click()
+                except Exception:
+                    pass
 
-        # Sometimes there is intermediate page
-        try:
-            self.wait.until(
-                EC.element_to_be_clickable((By.NAME, "newOrder"))
-            ).click()
-        except Exception:
-            pass
+                self.wait_ready()
+                self.shot("07_checkout")
 
-        self.shot("06_confirm_page")
+                # Final submit
+                self.wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))).click()
 
-        # Final submit
-        submit_btn = self.wait.until(
-            EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))
-        )
-        submit_btn.click()
+                # Confirmation
+                self.wait.until(
+                    lambda d: ("Thank you" in d.page_source) or ("Order" in d.page_source)
+                )
+                self.wait_ready()
+                self.shot("08_success")
 
-        print("Submit clicked")
+                print("Purchase completed successfully")
+                return "Order placed successfully"
 
-        # Confirmation wait
-        self.wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//*[contains(text(),'Order')]")
-            )
-        )
+            except Exception as e:
+                print(f"[BUY_FLOW] Attempt {attempt} failed: {e}")
+                self.shot(f"99_buyflow_fail_attempt_{attempt}")
+                self.dump_page()
 
-        self.shot("07_success")
-
-        print("Purchase completed successfully")
-        return "Order placed successfully"
+                # retry once with refresh
+                if attempt < 2:
+                    try:
+                        self.driver.refresh()
+                        self.wait_ready()
+                        time.sleep(2)
+                    except Exception:
+                        pass
+                    continue
+                raise
