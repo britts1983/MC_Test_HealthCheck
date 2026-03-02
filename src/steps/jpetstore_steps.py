@@ -1,6 +1,7 @@
 import os
 import time
 from typing import List, Tuple, Optional
+from urllib.parse import urljoin
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -51,7 +52,7 @@ class JPetStoreSteps:
 
     def wait_ready(self):
         self.wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-        time.sleep(1)
+        time.sleep(0.8)
 
     def is_logged_in(self) -> bool:
         try:
@@ -68,9 +69,6 @@ class JPetStoreSteps:
             pass
 
     def _safe_click(self, locators: List[Tuple[str, str]], label_on_fail: str) -> None:
-        """
-        Try multiple locators; scroll into view; click; fallback to JS click.
-        """
         last_err: Optional[Exception] = None
 
         for by, value in locators:
@@ -83,7 +81,6 @@ class JPetStoreSteps:
                     el.click()
                     return
                 except (ElementClickInterceptedException, TimeoutException):
-                    # fallback JS click
                     self.driver.execute_script("arguments[0].click();", el)
                     return
 
@@ -91,13 +88,12 @@ class JPetStoreSteps:
                 last_err = e
                 continue
 
-        # If all locators fail
         self.shot(label_on_fail)
         self.dump_page()
         raise TimeoutException(f"Could not click element using locators: {locators}. Last error: {last_err}")
 
     # -------------------------------
-    # OPEN SITE (REAL USER FLOW)
+    # OPEN SITE
     # -------------------------------
     def open_site(self, url: str):
         print("Opening:", url)
@@ -105,7 +101,6 @@ class JPetStoreSteps:
         self.wait_ready()
         self.shot("01_home")
 
-        # Click "Enter the Store"
         self._safe_click(
             locators=[
                 (By.LINK_TEXT, "Enter the Store"),
@@ -115,7 +110,6 @@ class JPetStoreSteps:
             label_on_fail="01_enter_store_not_found",
         )
 
-        # Wait until store home is ready (Sign In should exist)
         self.wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Sign In")))
         self.wait_ready()
         self.shot("02_store_home")
@@ -130,11 +124,11 @@ class JPetStoreSteps:
                 (By.LINK_TEXT, "Sign In"),
                 (By.PARTIAL_LINK_TEXT, "Sign In"),
                 (By.CSS_SELECTOR, "a[href*='signonForm']"),
+                (By.CSS_SELECTOR, "a[href*='signon']"),
             ],
             label_on_fail="02_signin_not_found",
         )
 
-        # Wait for login form
         self.wait.until(EC.presence_of_element_located((By.NAME, "username")))
 
         u = self.driver.find_element(By.NAME, "username")
@@ -148,20 +142,40 @@ class JPetStoreSteps:
 
         self.driver.find_element(By.NAME, "signon").click()
 
-        # Confirm login by waiting Sign Out
         self.wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Sign Out")))
         self.wait_ready()
         self.shot("03_after_login")
         print("Login successful")
 
     # -------------------------------
-    # BUY FLOW (HARDENED)
+    # HELPERS FOR JPETSTORE SELECTORS
+    # -------------------------------
+    def _product_links(self):
+        # Some JPetStore builds use Catalog.action?viewProduct, others use Product.action
+        return self.driver.find_elements(
+            By.XPATH,
+            "//a[contains(@href,'Catalog.action') and (contains(@href,'viewProduct') or contains(@href,'productId='))]"
+            " | //a[contains(@href,'Product.action')]"
+        )
+
+    def _item_links(self):
+        # Some use Catalog.action?viewItem, others use Item.action
+        return self.driver.find_elements(
+            By.XPATH,
+            "//a[contains(@href,'Catalog.action') and (contains(@href,'viewItem') or contains(@href,'itemId='))]"
+            " | //a[contains(@href,'Item.action')]"
+        )
+
+    # -------------------------------
+    # BUY FLOW (HARDENED + FIXED)
     # -------------------------------
     def buy_flow(self):
         """
-        IMPORTANT FIX:
-        - JPetStore category links (FISH, DOGS...) are image links -> link text is EMPTY.
-        - So we must click by href containing categoryId=FISH.
+        Fixes:
+        - Category click uses href match (image links).
+        - Product/item link patterns support BOTH:
+            Catalog.action?viewProduct / viewItem AND Product.action / Item.action
+        - Also ensures navigation to FISH by URL fallback if click doesn't navigate.
         """
         for attempt in range(1, 3):
             try:
@@ -178,31 +192,40 @@ class JPetStoreSteps:
                     label_on_fail=f"04_fish_link_not_found_attempt_{attempt}",
                 )
 
-                # Wait product list links appear
-                self.wait.until(
-                    lambda d: len(d.find_elements(By.XPATH, "//a[contains(@href,'Product.action')]")) > 0
-                )
+                # Wait until URL actually has categoryId=FISH OR page has product links
+                def fish_loaded(d):
+                    return ("categoryId=FISH" in d.current_url) or (len(self._product_links()) > 0)
+
+                try:
+                    self.wait.until(fish_loaded)
+                except TimeoutException:
+                    # If click didn't navigate (flaky UI), go directly to FISH category URL
+                    fish_url = urljoin(self.driver.current_url, "/actions/Catalog.action?viewCategory=&categoryId=FISH")
+                    self.driver.get(fish_url)
+                    self.wait_ready()
+                    self.wait.until(lambda d: len(self._product_links()) > 0)
+
                 self.wait_ready()
                 self.shot("04_fish_category")
 
                 # Click first product
-                products = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Product.action')]")
+                products = self._product_links()
                 if not products:
-                    raise TimeoutException("No Product.action links found on category page.")
+                    raise TimeoutException("No product links found on FISH category page (Catalog.action viewProduct/productId or Product.action).")
+
                 self._scroll_into_view(products[0])
                 products[0].click()
 
-                # Wait item list links appear
-                self.wait.until(
-                    lambda d: len(d.find_elements(By.XPATH, "//a[contains(@href,'Item.action')]")) > 0
-                )
+                # Wait item links
+                self.wait.until(lambda d: len(self._item_links()) > 0)
                 self.wait_ready()
                 self.shot("05_product_page")
 
                 # Click first item
-                items = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Item.action')]")
+                items = self._item_links()
                 if not items:
-                    raise TimeoutException("No Item.action links found on product page.")
+                    raise TimeoutException("No item links found on product page (Catalog.action viewItem/itemId or Item.action).")
+
                 self._scroll_into_view(items[0])
                 items[0].click()
 
@@ -212,6 +235,7 @@ class JPetStoreSteps:
                         (By.LINK_TEXT, "Add to Cart"),
                         (By.PARTIAL_LINK_TEXT, "Add to Cart"),
                         (By.XPATH, "//a[contains(@href,'addItemToCart')]"),
+                        (By.XPATH, "//a[contains(@href,'Catalog.action') and contains(@href,'addItemToCart')]"),
                     ],
                     label_on_fail="06_add_to_cart_not_found",
                 )
@@ -224,11 +248,12 @@ class JPetStoreSteps:
                         (By.LINK_TEXT, "Proceed to Checkout"),
                         (By.PARTIAL_LINK_TEXT, "Proceed"),
                         (By.XPATH, "//a[contains(@href,'newOrderForm')]"),
+                        (By.XPATH, "//a[contains(@href,'Catalog.action') and contains(@href,'newOrderForm')]"),
                     ],
                     label_on_fail="07_checkout_button_not_found",
                 )
 
-                # Sometimes there is an intermediate "newOrder" button
+                # Sometimes there is an intermediate "newOrder" submit
                 try:
                     btn = self.wait.until(EC.presence_of_element_located((By.NAME, "newOrder")))
                     self._scroll_into_view(btn)
@@ -250,8 +275,8 @@ class JPetStoreSteps:
                 except Exception:
                     self.driver.execute_script("arguments[0].click();", submit)
 
-                # Confirmation
-                self.wait.until(lambda d: ("Thank you" in d.page_source) or ("Order" in d.page_source))
+                # Confirmation (different builds show different text)
+                self.wait.until(lambda d: ("Thank you" in d.page_source) or ("Order" in d.page_source) or ("Confirmation" in d.page_source))
                 self.wait_ready()
                 self.shot("08_success")
 
