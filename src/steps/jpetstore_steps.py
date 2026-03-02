@@ -17,10 +17,10 @@ def save_screenshot(driver, folder, label):
 
 class JPetStoreSteps:
 
-    def __init__(self, driver, timeout=120, screenshot_dir="artifacts/screenshots"):
+    def __init__(self, driver, timeout_sec=120, screenshots_dir="artifacts/screenshots"):
         self.driver = driver
-        self.wait = WebDriverWait(driver, timeout)
-        self.screenshot_dir = screenshot_dir
+        self.wait = WebDriverWait(driver, timeout_sec)
+        self.screenshot_dir = screenshots_dir
 
     def wait_ready(self):
         self.wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
