@@ -43,36 +43,55 @@ class JPetStoreSteps:
         print(f"[SCREENSHOT] {path}")
         return path
 
-    # ---------------------------
-    # FIXED & HARDENED open_site
-    # ---------------------------
+    # --------------------------------------------------
+    # HARDENED open_site WITH DEBUG DUMP
+    # --------------------------------------------------
     def open_site(self, url: str):
 
+        print("Opening:", url)
         self.driver.get(url)
 
-        # Wait for full document load
+        # Wait until page fully loads
         self.wait.until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
 
-        # Small delay for headless rendering stability
-        time.sleep(2)
+        time.sleep(3)  # headless render buffer
 
+        print("Current URL:", self.driver.current_url)
+        print("Page title:", self.driver.title)
+
+        # Screenshot initial page
         self.shot("01_home")
 
+        # Dump page source for debugging
+        debug_file = "artifacts/debug_page.html"
+        os.makedirs("artifacts", exist_ok=True)
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(self.driver.page_source)
+
+        print(f"Page source dumped to {debug_file}")
+
         try:
+            # More reliable XPath locator
             self.wait.until(
-                EC.presence_of_element_located((By.PARTIAL_LINK_TEXT, "Sign"))
+                EC.presence_of_element_located(
+                    (By.XPATH, "//a[contains(text(),'Sign')]")
+                )
             )
+            print("Sign link found.")
         except TimeoutException:
-            # Take extra debug screenshot before failing
+            print("Sign link NOT found.")
             self.shot("01_home_signin_not_found")
             raise
 
+    # --------------------------------------------------
+    # LOGIN
+    # --------------------------------------------------
     def login(self, username: str, password: str):
 
         self.wait.until(
-            EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "Sign"))
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Sign')]"))
         ).click()
 
         self.wait.until(
@@ -88,12 +107,17 @@ class JPetStoreSteps:
         self.driver.find_element(By.NAME, "signon").click()
 
         self.wait.until(
-            EC.presence_of_element_located((By.PARTIAL_LINK_TEXT, "Sign Out"))
+            EC.presence_of_element_located(
+                (By.XPATH, "//a[contains(text(),'Sign Out')]")
+            )
         )
 
         self.shot("02_after_login")
         print("Login completed")
 
+    # --------------------------------------------------
+    # BUY FLOW
+    # --------------------------------------------------
     def buy_flow(self):
 
         self.driver.get(
@@ -123,12 +147,11 @@ class JPetStoreSteps:
 
         self.shot("04_cart")
 
-        # Proceed to checkout
+        # Checkout
         self.wait.until(
             EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))
         ).click()
 
-        # Continue page
         try:
             self.wait.until(
                 EC.element_to_be_clickable((By.NAME, "newOrder"))
@@ -155,10 +178,11 @@ class JPetStoreSteps:
                     or "Order" in d.page_source
                 )
             )
+            print("Order confirmation detected.")
         except TimeoutException:
+            print("Order confirmation NOT detected.")
             self.shot("06_submit_timeout")
             raise
 
         self.shot("06_after_submit")
-
         print("Flow completed successfully")
