@@ -1,38 +1,130 @@
 pipeline {
-    agent any
-    options { timestamps() }
+  agent any
 
-    stages {
-        stage('Checkout') {
-            steps { checkout scm }
-        }
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
 
-        stage('Setup Python') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    python -m pip install --upgrade pip
-                    pip install -r requirements.txt
-                '''
-            }
-        }
+  parameters {
+    choice(name: 'ENV', choices: ['dev', 'prod'], description: 'Target environment')
+    booleanParam(name: 'HEADLESS', defaultValue: true, description: 'Run Chrome headless')
+    string(name: 'TIMEOUT', defaultValue: '120', description: 'Timeout in seconds')
+    string(name: 'URL', defaultValue: 'https://petstore.octoperf.com/', description: 'Site URL')
+    string(name: 'EMAIL_TO', defaultValue: 'your.email@example.com', description: 'Email recipients (comma separated)')
+  }
 
-        stage('Run Test') {
-            steps {
-                sh '''
-                    . venv/bin/activate
-                    mkdir -p artifacts
-                    PYTHONPATH=src python src/run.py --headless --timeout 120
-                '''
-            }
-        }
+  triggers {
+    // Every 30 minutes (change as you want)
+    cron('H/30 * * * *')
+  }
+
+  environment {
+    VENV_DIR = "venv"
+    ARTIFACTS_DIR = "artifacts"
+    SCREENSHOTS_DIR = "artifacts/screenshots"
+    PYTHONPATH = "src"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
     }
 
-    post {
-        always {
-            archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true, fingerprint: true
-            echo "Pipeline finished"
-        }
+    stage('Setup Python') {
+      steps {
+        sh '''
+          python3 -m venv ${VENV_DIR}
+          . ${VENV_DIR}/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        '''
+      }
     }
+
+    stage('Run Test') {
+      steps {
+        script {
+          // Map env -> credentialsId
+          def credId = (params.ENV == 'prod') ? 'jpetstore-prod' : 'jpetstore-dev'
+
+          withCredentials([usernamePassword(credentialsId: credId, usernameVariable: 'APP_USER', passwordVariable: 'APP_PASS')]) {
+            sh """
+              set -e
+              . ${VENV_DIR}/bin/activate
+              mkdir -p ${ARTIFACTS_DIR}
+              mkdir -p ${SCREENSHOTS_DIR}
+
+              python ${PYTHONPATH}/run.py \
+                --env ${params.ENV} \
+                ${params.HEADLESS ? '--headless' : ''} \
+                --timeout ${params.TIMEOUT} \
+                --url "${params.URL}" \
+                --username "$APP_USER" \
+                --password "$APP_PASS"
+            """
+          }
+        }
+      }
+    }
+
+    stage('Publish HTML Report') {
+      steps {
+        publishHTML(target: [
+          allowMissing: false,
+          alwaysLinkToLastBuild: true,
+          keepAll: true,
+          reportDir: 'artifacts',
+          reportFiles: 'health_report.html',
+          reportName: "Health Check Report (${params.ENV})"
+        ])
+      }
+    }
+  }
+
+  post {
+    always {
+      // Always archive report + screenshots so you can open/download from Jenkins build
+      archiveArtifacts artifacts: 'artifacts/health_report.html, artifacts/screenshots/*.png, artifacts/error.png', allowEmptyArchive: true
+
+      echo "Pipeline finished"
+    }
+
+    success {
+      emailext(
+        subject: "✅ PASS: JPetStore HealthCheck (${params.ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+        to: "${params.EMAIL_TO}",
+        mimeType: 'text/html',
+        body: """
+          <p><b>Status:</b> PASS</p>
+          <p><b>Job:</b> ${env.JOB_NAME} #${env.BUILD_NUMBER}</p>
+          <p><b>Environment:</b> ${params.ENV}</p>
+          <p><b>Report:</b> <a href="${env.BUILD_URL}HTML_20Report/">Open HTML Report</a></p>
+          <p><b>Artifacts:</b> <a href="${env.BUILD_URL}artifact/">Open artifacts</a></p>
+        """,
+        attachmentsPattern: 'artifacts/health_report.html, artifacts/screenshots/*.png'
+      )
+    }
+
+    failure {
+      emailext(
+        subject: "❌ FAIL: JPetStore HealthCheck (${params.ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+        to: "${params.EMAIL_TO}",
+        mimeType: 'text/html',
+        body: """
+          <p><b>Status:</b> FAIL</p>
+          <p><b>Job:</b> ${env.JOB_NAME} #${env.BUILD_NUMBER}</p>
+          <p><b>Environment:</b> ${params.ENV}</p>
+          <p><b>Console:</b> <a href="${env.BUILD_URL}console">Open console log</a></p>
+          <p><b>Report:</b> <a href="${env.BUILD_URL}HTML_20Report/">Open HTML Report</a></p>
+          <p><b>Artifacts:</b> <a href="${env.BUILD_URL}artifact/">Open artifacts</a></p>
+          <p>Please check screenshots attached (especially the last one).</p>
+        """,
+        attachmentsPattern: 'artifacts/health_report.html, artifacts/screenshots/*.png'
+      )
+    }
+  }
 }
