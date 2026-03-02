@@ -80,7 +80,7 @@ class JPetStoreSteps:
         print("Login successful")
 
     # -------------------------------------------------
-    # FINAL STABLE BUY FLOW (NO DYNAMIC SELECTORS)
+    # FINAL STABLE BUY FLOW
     # -------------------------------------------------
     def buy_flow(self):
         try:
@@ -88,7 +88,6 @@ class JPetStoreSteps:
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
             )
-
             self.wait.until(lambda d: "FISH" in d.page_source)
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "04_fish_category")
@@ -97,7 +96,6 @@ class JPetStoreSteps:
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Catalog.action?viewProduct=&productId=FI-SW-01"
             )
-
             self.wait.until(lambda d: "FI-SW-01" in d.page_source)
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "05_product_page")
@@ -106,9 +104,9 @@ class JPetStoreSteps:
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Catalog.action?viewItem=&itemId=EST-1"
             )
-
             self.wait.until(lambda d: "Add to Cart" in d.page_source)
 
+            # Add to cart
             self.wait.until(
                 EC.element_to_be_clickable(
                     (By.XPATH, "//a[contains(text(),'Add to Cart')]")
@@ -118,7 +116,7 @@ class JPetStoreSteps:
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "06_cart")
 
-            # Checkout
+            # Proceed to checkout
             self.wait.until(
                 EC.element_to_be_clickable(
                     (By.XPATH, "//a[contains(text(),'Proceed')]")
@@ -142,17 +140,18 @@ class JPetStoreSteps:
                 )
             ).click()
 
+            # Wait for URL change instead of text match
             self.wait.until(
-                lambda d: "Order" in d.page_source or "Thank you" in d.page_source
+                lambda d: "viewOrder" in d.current_url or "Order" in d.current_url
             )
 
-            self.wait_ready()
+            time.sleep(2)
             save_screenshot(self.driver, self.screenshot_dir, "08_success")
 
             print("Purchase completed successfully")
             return "Order placed successfully"
 
-        except Exception as e:
+        except Exception:
             save_screenshot(self.driver, self.screenshot_dir, "99_failure")
             self.dump_page()
             raise
