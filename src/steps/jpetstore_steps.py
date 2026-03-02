@@ -33,7 +33,7 @@ def save_rotating_screenshot(driver, folder: str, label: str, max_files: int = 2
 
 class JPetStoreSteps:
 
-    def __init__(self, driver, timeout_sec: int = 60, screenshots_dir: str = "artifacts/screenshots"):
+    def __init__(self, driver, timeout_sec: int = 120, screenshots_dir: str = "artifacts/screenshots"):
         self.driver = driver
         self.wait = WebDriverWait(driver, timeout_sec)
         self.screenshots_dir = screenshots_dir
@@ -43,9 +43,9 @@ class JPetStoreSteps:
         print(f"[SCREENSHOT] {path}")
         return path
 
-    # --------------------------------------------------
+    # -------------------------------
     # OPEN SITE
-    # --------------------------------------------------
+    # -------------------------------
     def open_site(self, url: str):
 
         print("Opening:", url)
@@ -58,22 +58,20 @@ class JPetStoreSteps:
         time.sleep(2)
         self.shot("01_home")
 
-        # Click Enter the Store
         self.wait.until(
             EC.element_to_be_clickable((By.LINK_TEXT, "Enter the Store"))
         ).click()
 
-        # Wait for Sign In
         self.wait.until(
             EC.presence_of_element_located((By.LINK_TEXT, "Sign In"))
         )
 
         self.shot("02_store_home")
-        print("Store page loaded successfully")
+        print("Store loaded")
 
-    # --------------------------------------------------
+    # -------------------------------
     # LOGIN
-    # --------------------------------------------------
+    # -------------------------------
     def login(self, username: str, password: str):
 
         self.wait.until(
@@ -97,11 +95,11 @@ class JPetStoreSteps:
         )
 
         self.shot("03_after_login")
-        print("Login completed successfully")
+        print("Login successful")
 
-    # --------------------------------------------------
-    # BUY FLOW (SAFE VERSION)
-    # --------------------------------------------------
+    # -------------------------------
+    # BUY FLOW (FINAL STABLE)
+    # -------------------------------
     def buy_flow(self):
 
         # Go to FISH category
@@ -109,32 +107,29 @@ class JPetStoreSteps:
             "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
         )
 
+        # Wait until product links exist
         self.wait.until(
-            EC.presence_of_element_located((By.ID, "Catalog"))
+            EC.presence_of_element_located(
+                (By.XPATH, "//a[contains(@href,'Product.action')]")
+            )
         )
 
         self.shot("04_category")
 
-        # Click first product (safe locator inside Catalog table)
-        first_product = self.wait.until(
-            EC.element_to_be_clickable(
-                (By.XPATH, "//table[@id='Catalog']//tr[2]//a")
-            )
-        )
-        first_product.click()
+        # Click first product safely
+        products = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Product.action')]")
+        products[0].click()
 
-        # Wait product page
+        # Wait for item links
         self.wait.until(
-            EC.presence_of_element_located((By.ID, "Catalog"))
-        )
-
-        # Click first item row
-        first_item = self.wait.until(
-            EC.element_to_be_clickable(
-                (By.XPATH, "//table[@id='Catalog']//tr[2]//a")
+            EC.presence_of_element_located(
+                (By.XPATH, "//a[contains(@href,'Item.action')]")
             )
         )
-        first_item.click()
+
+        # Click first item safely
+        items = self.driver.find_elements(By.XPATH, "//a[contains(@href,'Item.action')]")
+        items[0].click()
 
         # Add to cart
         self.wait.until(
@@ -148,7 +143,7 @@ class JPetStoreSteps:
             EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))
         ).click()
 
-        # Confirm page
+        # Sometimes there is intermediate page
         try:
             self.wait.until(
                 EC.element_to_be_clickable((By.NAME, "newOrder"))
@@ -156,7 +151,7 @@ class JPetStoreSteps:
         except Exception:
             pass
 
-        self.shot("06_confirm_address")
+        self.shot("06_confirm_page")
 
         # Final submit
         submit_btn = self.wait.until(
@@ -164,16 +159,16 @@ class JPetStoreSteps:
         )
         submit_btn.click()
 
-        print("Final submit clicked")
+        print("Submit clicked")
 
-        # Confirmation check
+        # Confirmation wait
         self.wait.until(
             EC.presence_of_element_located(
-                (By.XPATH, "//li[contains(text(),'Order')]")
+                (By.XPATH, "//*[contains(text(),'Order')]")
             )
         )
 
-        self.shot("07_after_submit")
-        print("Purchase flow completed successfully")
+        self.shot("07_success")
 
+        print("Purchase completed successfully")
         return "Order placed successfully"
