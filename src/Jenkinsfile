@@ -3,12 +3,6 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                git 'https://github.com/britts1983/MC_Test_HealthCheck.git'
-            }
-        }
-
         stage('Setup Python') {
             steps {
                 sh '''
