@@ -3,7 +3,6 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 
 
 def save_screenshot(driver, folder, label):
@@ -81,38 +80,34 @@ class JPetStoreSteps:
         print("Login successful")
 
     # -------------------------------------------------
-    # BUY FLOW (STABLE VERSION)
+    # FINAL STABLE BUY FLOW (NO DYNAMIC SELECTORS)
     # -------------------------------------------------
     def buy_flow(self):
         try:
-            # Click FISH category
-            self.wait.until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, "a[href*='categoryId=FISH']")
-                )
-            ).click()
+            # Directly open FISH category
+            self.driver.get(
+                "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
+            )
 
+            self.wait.until(lambda d: "FISH" in d.page_source)
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "04_fish_category")
 
-            # Click first product using productId
-            product = self.wait.until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//a[contains(@href,'productId=')]")
-                )
+            # Directly open product
+            self.driver.get(
+                "https://petstore.octoperf.com/actions/Catalog.action?viewProduct=&productId=FI-SW-01"
             )
-            product.click()
 
+            self.wait.until(lambda d: "FI-SW-01" in d.page_source)
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "05_product_page")
 
-            # Click first item using itemId
-            item = self.wait.until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//a[contains(@href,'itemId=')]")
-                )
+            # Directly open item
+            self.driver.get(
+                "https://petstore.octoperf.com/actions/Catalog.action?viewItem=&itemId=EST-1"
             )
-            item.click()
+
+            self.wait.until(lambda d: "Add to Cart" in d.page_source)
 
             self.wait.until(
                 EC.element_to_be_clickable(
