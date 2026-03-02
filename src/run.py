@@ -1,64 +1,14 @@
 import argparse
+import os
 import sys
 import time
-import os
+import traceback
 
 from engine.browser import create_driver
 from steps.jpetstore_steps import JPetStoreSteps
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env", default="dev")
-    parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--username", default="j2ee")
-    parser.add_argument("--password", default="j2ee")
-    parser.add_argument("--timeout", type=int, default=60)
-    parser.add_argument("--url", default="https://petstore.octoperf.com/")
-
-    args = parser.parse_args()
-
-    os.makedirs("artifacts", exist_ok=True)
-
-    start_time = time.time()
-    status = "FAIL"
-
-    driver = create_driver(headless=args.headless, timeout_sec=args.timeout)
-
-    try:
-        steps = JPetStoreSteps(driver, timeout_sec=args.timeout)
-
-        steps.open_site(args.url)
-        steps.login(username=args.username, password=args.password)
-        steps.buy_flow()
-
-        status = "PASS"
-
-    except Exception as e:
-        try:
-            driver.save_screenshot("artifacts/error.png")
-        except Exception:
-            pass
-        print("Error:", e)
-
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-
-    duration = round(time.time() - start_time, 2)
-    generate_report(status, duration, args.env)
-
-    print("=" * 50)
-    print(f"FINAL STATUS: {status}")
-    print("=" * 50)
-
-    if status != "PASS":
-        sys.exit(1)
-
-
-def generate_report(status, duration, env):
+def generate_report(status: str, duration: float, env: str):
     html = f"""
     <html>
     <body>
@@ -86,6 +36,70 @@ def generate_report(status, duration, env):
 
     print("Status:", status)
     print("Duration:", duration)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--env", default="dev")
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--username", default="j2ee")
+    parser.add_argument("--password", default="j2ee")
+    parser.add_argument("--timeout", type=int, default=120)  # increased
+    parser.add_argument("--url", default="https://petstore.octoperf.com/")
+
+    args = parser.parse_args()
+
+    os.makedirs("artifacts", exist_ok=True)
+
+    start_time = time.time()
+    status = "FAIL"
+
+    driver = create_driver(headless=args.headless, timeout_sec=args.timeout)
+
+    try:
+        steps = JPetStoreSteps(driver, timeout_sec=args.timeout)
+
+        # open site with retry
+        steps.open_site(args.url)
+
+        steps.login(username=args.username, password=args.password)
+        steps.buy_flow()
+
+        status = "PASS"
+
+    except Exception as e:
+        print("Error:", e)
+        print("------ TRACEBACK ------")
+        print(traceback.format_exc())
+        print("-----------------------")
+
+        # save debug files
+        try:
+            driver.save_screenshot("artifacts/error.png")
+        except Exception:
+            pass
+
+        try:
+            with open("artifacts/page_source.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+        except Exception:
+            pass
+
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    duration = round(time.time() - start_time, 2)
+    generate_report(status, duration, args.env)
+
+    print("=" * 50)
+    print(f"FINAL STATUS: {status}")
+    print("=" * 50)
+
+    if status != "PASS":
+        sys.exit(1)
 
 
 if __name__ == "__main__":

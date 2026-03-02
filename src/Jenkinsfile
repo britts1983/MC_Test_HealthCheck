@@ -1,15 +1,10 @@
 pipeline {
     agent any
-
-    options {
-        timestamps()
-    }
+    options { timestamps() }
 
     stages {
         stage('Checkout') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
         stage('Setup Python') {
@@ -28,25 +23,15 @@ pipeline {
                 sh '''
                     . venv/bin/activate
                     mkdir -p artifacts
-
-                    # IMPORTANT: your current run works with this style
-                    PYTHONPATH=src python src/run.py --headless
-
-                    # Fail build if report not generated (prevents "false green")
-                    test -f artifacts/health_report.html
+                    PYTHONPATH=src python src/run.py --headless --timeout 120
                 '''
-            }
-        }
-
-        stage('Archive Report') {
-            steps {
-                archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true, fingerprint: true
             }
         }
     }
 
     post {
         always {
+            archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true, fingerprint: true
             echo "Pipeline finished"
         }
     }

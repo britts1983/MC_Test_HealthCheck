@@ -1,18 +1,34 @@
+import time
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 
 class JPetStoreSteps:
-    def __init__(self, driver, timeout_sec: int = 60):
+    def __init__(self, driver, timeout_sec: int = 120):
         self.driver = driver
         self.wait = WebDriverWait(driver, timeout_sec)
+        self.timeout_sec = timeout_sec
 
     def open_site(self, url: str = "https://petstore.octoperf.com/"):
-        self.driver.get(url)
-        self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Sign In")))
+        # Retry once because the demo site sometimes loads slow
+        for attempt in range(1, 3):
+            try:
+                self.driver.get(url)
 
-    # Give defaults so your run.py can call steps.login() without args
+                # Wait for DOM to be ready
+                self.wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+
+                # Wait for Sign In to be present (presence is safer than clickable)
+                self.wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Sign In")))
+                return
+
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                time.sleep(3)  # small pause before retry
+
     def login(self, username: str = "j2ee", password: str = "j2ee"):
         self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))).click()
 
@@ -32,14 +48,12 @@ class JPetStoreSteps:
         print("Login completed")
 
     def buy_flow(self):
-        # Go directly to Fish category (stable)
         self.driver.get(
             "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
         )
 
         self.wait.until(EC.presence_of_element_located((By.XPATH, "//table")))
 
-        # Click first product
         rows = self.driver.find_elements(By.XPATH, "//table//tr[position()>1]//a")
         if not rows:
             raise RuntimeError("No products found in Fish category page")
@@ -47,21 +61,15 @@ class JPetStoreSteps:
 
         self.wait.until(EC.presence_of_element_located((By.XPATH, "//table")))
 
-        # Click first item
         items = self.driver.find_elements(By.XPATH, "//table//tr[position()>1]//a")
         if not items:
             raise RuntimeError("No items found in product page")
         items[0].click()
 
-        # Add to cart
         self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Add to Cart"))).click()
 
-        # Proceed to checkout
-        self.wait.until(
-            EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))
-        ).click()
+        self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))).click()
 
-        # First Continue (new order page) - some demo flows may skip it
         try:
             self.wait.until(EC.element_to_be_clickable((By.NAME, "newOrder"))).click()
         except Exception:
@@ -69,14 +77,10 @@ class JPetStoreSteps:
 
         print("On confirm address page")
 
-        # Second Continue/Confirm (confirm page)
-        self.wait.until(
-            EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))
-        ).click()
+        self.wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))).click()
 
         print("Final submit clicked")
 
-        # Accept demo-site behavior: home OR order page after submit
         self.wait.until(
             lambda d: (
                 "Catalog" in d.page_source
