@@ -1,94 +1,38 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    MC_ENV = "DEV"
-    MC_HEADLESS = "true"
-    // Optionally set secrets here via Jenkins Credentials (recommended):
-    // MC_USERNAME = credentials('mc_username')
-    // MC_PASSWORD = credentials('mc_password')
-  }
+    stages {
 
-  triggers {
-    cron('H * * * *')   // every hour
-  }
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/britts1983/MC_Test_HealthCheck.git'
+            }
+        }
 
-  stages {
-    stage('Setup venv') {
-      steps {
-        sh '''
-          python3 -m venv .venv
-          . .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-        '''
-      }
+        stage('Setup Python') {
+            steps {
+                sh '''
+                python3 -m venv venv
+                . venv/bin/activate
+                pip install -r requirements.txt
+                '''
+            }
+        }
+
+        stage('Run Test') {
+            steps {
+                sh '''
+                . venv/bin/activate
+                mkdir -p artifacts
+                python src/run.py --headless
+                '''
+            }
+        }
+
+        stage('Archive Report') {
+            steps {
+                archiveArtifacts artifacts: 'artifacts/*', allowEmptyArchive: true
+            }
+        }
     }
-
-    stage('Run Synthetic') {
-      steps {
-        sh '''
-          . .venv/bin/activate
-          python src/run.py
-        '''
-      }
-    }
-  }
-
-  post {
-    always {
-      archiveArtifacts artifacts: 'artifacts/**/*', fingerprint: true
-
-      // Publish HTML (requires "HTML Publisher" plugin)
-      publishHTML(target: [
-        allowMissing: true,
-        alwaysLinkToLastBuild: true,
-        keepAll: true,
-        reportDir: 'artifacts',
-        reportFiles: 'summary_report.html,health_report.html',
-        reportName: 'MC Synthetic Reports'
-      ])
-    }
-
-    failure {
-      // Email on failure (requires Email Extension plugin configured in Jenkins)
-      emailext(
-        subject: "[FAIL] MC Synthetic (${env.MC_ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-        body: """Build failed.
-Job: ${env.JOB_NAME} #${env.BUILD_NUMBER}
-Env: ${env.MC_ENV}
-
-Open HTML report from build artifacts: summary_report.html / health_report.html
-""",
-        to: "YOUR_EMAIL@example.com"
-      )
-
-      // MS Teams webhook (simple curl)
-      sh '''
-        if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-          curl -H "Content-Type: application/json" -d '{
-            "@type":"MessageCard",
-            "@context":"http://schema.org/extensions",
-            "summary":"MC Synthetic FAILED",
-            "title":"MC Synthetic FAILED",
-            "text":"Job: '${env.JOB_NAME} #${env.BUILD_NUMBER}' Env: '${env.MC_ENV}'. Check artifacts summary_report.html"
-          }' "$TEAMS_WEBHOOK_URL"
-        fi
-      '''
-
-      // Slack webhook (simple curl)
-      sh '''
-        if [ -n "$SLACK_WEBHOOK_URL" ]; then
-          curl -H "Content-Type: application/json" -d '{
-            "text":"❌ MC Synthetic FAILED | Job: '${env.JOB_NAME} #${env.BUILD_NUMBER}' | Env: '${env.MC_ENV}' | See artifacts summary_report.html"
-          }' "$SLACK_WEBHOOK_URL"
-        fi
-      '''
-    }
-
-    success {
-      // Optional: email every run with latest status table (if you want)
-      // emailext(...)  // I can add if you confirm “every run” vs “fail only”
-    }
-  }
 }
