@@ -18,7 +18,7 @@ pipeline {
                 sh '''
                 . venv/bin/activate
                 mkdir -p artifacts
-                python -m src.run --headless
+                PYTHONPATH=src python src/run.py --headless
                 '''
             }
         }
