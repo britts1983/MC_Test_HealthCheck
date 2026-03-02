@@ -1,6 +1,6 @@
 import argparse
 import time
-from browser import create_driver
+from src.browser import create_driver
 from steps.jpetstore_steps import JPetStoreSteps
 
 def main():
