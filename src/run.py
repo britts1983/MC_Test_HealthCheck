@@ -1,115 +1,89 @@
 import argparse
-import os
 import sys
 import time
 import traceback
 
-from engine.browser import create_driver
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+
 from steps.jpetstore_steps import JPetStoreSteps
 
 
-ARTIFACTS_DIR = "artifacts"
 SCREENSHOTS_DIR = "artifacts/screenshots"
 
 
-def ensure_dirs():
-    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+def create_driver(headless=True):
+    options = Options()
+
+    if headless:
+        options.add_argument("--headless=new")
+
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+
+    # IMPORTANT for macOS stability
+    options.add_argument("--remote-allow-origins=*")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+
+    driver.set_page_load_timeout(120)
+    return driver
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", default="dev")
+    parser.add_argument("--env")
     parser.add_argument("--headless", action="store_true")
-
-    parser.add_argument("--username", default="j2ee")
-    parser.add_argument("--password", default="j2ee")
-    parser.add_argument("--timeout", type=int, default=60)
-    parser.add_argument("--url", default="https://petstore.octoperf.com/")
+    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--url")
+    parser.add_argument("--username")
+    parser.add_argument("--password")
 
     args = parser.parse_args()
 
-    ensure_dirs()
-
-    start_time = time.time()
-    status = "FAIL"
-    order_info = ""
-
-    driver = create_driver(headless=args.headless, timeout_sec=args.timeout)
+    driver = None
+    start = time.time()
 
     try:
-        steps = JPetStoreSteps(driver, timeout_sec=args.timeout, screenshots_dir=SCREENSHOTS_DIR)
+        driver = create_driver(headless=args.headless)
+
+        steps = JPetStoreSteps(
+            driver,
+            timeout_sec=args.timeout,
+            screenshots_dir=SCREENSHOTS_DIR
+        )
 
         steps.open_site(args.url)
-        steps.login(username=args.username, password=args.password)
+        steps.login(args.username, args.password)
         order_info = steps.buy_flow()
 
-        status = "PASS"
+        print("Status: PASS")
+        print("Duration:", round(time.time() - start, 2))
+        print("FINAL STATUS: PASS")
+
+        sys.exit(0)
 
     except Exception as e:
-        # Try to capture last state (this also rotates automatically because it is same folder naming)
-        try:
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            driver.save_screenshot(f"{SCREENSHOTS_DIR}/{ts}_ERROR.png")
-        except Exception:
-            pass
-
         print("Error:", e)
         print("------ TRACEBACK ------")
         traceback.print_exc()
         print("-----------------------")
+        print("Status: FAIL")
+        print("Duration:", round(time.time() - start, 2))
+        print("FINAL STATUS: FAIL")
 
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-
-    duration = round(time.time() - start_time, 2)
-    generate_report(status, duration, args.env, order_info)
-
-    print("==================================================")
-    print(f"FINAL STATUS: {status}")
-    print("==================================================")
-
-    if status != "PASS":
         sys.exit(1)
 
-
-def generate_report(status, duration, env, order_info):
-    generated = time.strftime("%Y-%m-%d %H:%M:%S")
-
-    html = f"""
-    <html>
-    <body>
-        <h2>Health Check Report</h2>
-        <table border="1" cellpadding="10">
-            <tr>
-                <th>Environment</th>
-                <th>Status</th>
-                <th>Duration (sec)</th>
-                <th>Order Proof</th>
-            </tr>
-            <tr>
-                <td>{env}</td>
-                <td>{status}</td>
-                <td>{duration}</td>
-                <td>{order_info or "N/A"}</td>
-            </tr>
-        </table>
-
-        <p><b>Generated:</b> {generated}</p>
-        <p><b>Screenshots folder:</b> {SCREENSHOTS_DIR}</p>
-        <p>Latest 20 screenshots are kept (FIFO rotation).</p>
-    </body>
-    </html>
-    """
-
-    with open(f"{ARTIFACTS_DIR}/health_report.html", "w") as f:
-        f.write(html)
-
-    print("Status:", status)
-    print("Duration:", duration)
+    finally:
+        if driver:
+            driver.quit()
 
 
 if __name__ == "__main__":
