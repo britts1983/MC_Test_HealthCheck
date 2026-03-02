@@ -44,14 +44,13 @@ class JPetStoreSteps:
         return path
 
     # --------------------------------------------------
-    # OPEN SITE (CORRECT FLOW)
+    # OPEN SITE
     # --------------------------------------------------
     def open_site(self, url: str):
 
         print("Opening:", url)
         self.driver.get(url)
 
-        # Wait for full page load
         self.wait.until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
@@ -59,14 +58,12 @@ class JPetStoreSteps:
         time.sleep(2)
         self.shot("01_home")
 
-        # Step 1: Click "Enter the Store"
+        # Click Enter the Store
         self.wait.until(
             EC.element_to_be_clickable((By.LINK_TEXT, "Enter the Store"))
         ).click()
 
-        print("Clicked Enter the Store")
-
-        # Step 2: Wait for store homepage
+        # Wait for Sign In
         self.wait.until(
             EC.presence_of_element_located((By.LINK_TEXT, "Sign In"))
         )
@@ -103,29 +100,41 @@ class JPetStoreSteps:
         print("Login completed successfully")
 
     # --------------------------------------------------
-    # BUY FLOW
+    # BUY FLOW (SAFE VERSION)
     # --------------------------------------------------
     def buy_flow(self):
 
+        # Go to FISH category
         self.driver.get(
             "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
         )
 
         self.wait.until(
-            EC.presence_of_element_located((By.XPATH, "//table"))
+            EC.presence_of_element_located((By.ID, "Catalog"))
         )
 
         self.shot("04_category")
 
-        # Click first product
-        self.driver.find_elements(By.XPATH, "//table//tr[position()>1]//a")[0].click()
+        # Click first product (safe locator inside Catalog table)
+        first_product = self.wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//table[@id='Catalog']//tr[2]//a")
+            )
+        )
+        first_product.click()
 
+        # Wait product page
         self.wait.until(
-            EC.presence_of_element_located((By.XPATH, "//table"))
+            EC.presence_of_element_located((By.ID, "Catalog"))
         )
 
-        # Click first item
-        self.driver.find_elements(By.XPATH, "//table//tr[position()>1]//a")[0].click()
+        # Click first item row
+        first_item = self.wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//table[@id='Catalog']//tr[2]//a")
+            )
+        )
+        first_item.click()
 
         # Add to cart
         self.wait.until(
@@ -139,6 +148,7 @@ class JPetStoreSteps:
             EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))
         ).click()
 
+        # Confirm page
         try:
             self.wait.until(
                 EC.element_to_be_clickable((By.NAME, "newOrder"))
@@ -149,25 +159,21 @@ class JPetStoreSteps:
         self.shot("06_confirm_address")
 
         # Final submit
-        continue_btn = self.wait.until(
+        submit_btn = self.wait.until(
             EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))
         )
-        continue_btn.click()
+        submit_btn.click()
 
         print("Final submit clicked")
 
         # Confirmation check
-        try:
-            self.wait.until(
-                lambda d: (
-                    "Thank you" in d.page_source
-                    or "submitted" in d.page_source
-                    or "Order" in d.page_source
-                )
+        self.wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, "//li[contains(text(),'Order')]")
             )
-        except TimeoutException:
-            self.shot("07_submit_timeout")
-            raise
+        )
 
         self.shot("07_after_submit")
         print("Purchase flow completed successfully")
+
+        return "Order placed successfully"
