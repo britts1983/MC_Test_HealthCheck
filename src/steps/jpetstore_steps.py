@@ -12,22 +12,36 @@ class JPetStoreSteps:
         self.timeout_sec = timeout_sec
 
     def open_site(self, url: str = "https://petstore.octoperf.com/"):
-        # Retry once because the demo site sometimes loads slow
+        """
+        Octoperf JPetStore landing page often shows "Enter the Store" first.
+        We must click it, then wait for "Sign In".
+        """
+
         for attempt in range(1, 3):
             try:
                 self.driver.get(url)
 
-                # Wait for DOM to be ready
+                # Wait for page ready
                 self.wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-                # Wait for Sign In to be present (presence is safer than clickable)
+                # If we see "Enter the Store", click it
+                try:
+                    enter = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.LINK_TEXT, "Enter the Store"))
+                    )
+                    enter.click()
+                except Exception:
+                    # If not present, maybe we are already inside the store
+                    pass
+
+                # Now wait for Sign In (inside store)
                 self.wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Sign In")))
                 return
 
-            except Exception as e:
+            except Exception:
                 if attempt == 2:
                     raise
-                time.sleep(3)  # small pause before retry
+                time.sleep(3)
 
     def login(self, username: str = "j2ee", password: str = "j2ee"):
         self.wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))).click()
