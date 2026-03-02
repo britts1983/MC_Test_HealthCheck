@@ -1,0 +1,10 @@
+env_name: DEV
+base_url: "https://petstore.octoperf.com/actions/Catalog.action"
+username: "j2ee"
+password: "j2ee"
+headless: false
+page_load_timeout_sec: 30
+step_timeout_sec: 20
+slack_webhook_url: ""
+pushgateway_url: ""
+prom_job_name: "mc_synthetic_jpetstore"

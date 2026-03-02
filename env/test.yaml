@@ -1,0 +1,21 @@
+{
+  "env_name": "TEST",
+  "base_url": "https://petstore.octoperf.com/",
+  "username": "j2ee",
+  "password": "j2ee",
+  "headless": false,
+  "page_load_timeout_sec": 30,
+  "step_timeout_sec": 25,
+  "chromedriver_path": "drivers/chromedriver",
+
+  "notify": {
+    "email_enabled": true,
+    "slack_enabled": false,
+    "teams_enabled": false,
+
+    "email_to": "YOUR_EMAIL@example.com",
+
+    "slack_webhook_url": "",
+    "teams_webhook_url": ""
+  }
+}

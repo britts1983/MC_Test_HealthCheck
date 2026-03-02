@@ -1,0 +1,7 @@
+.venv/
+drivers/
+*.zip
+artifacts/
+__pycache__/
+*.png
+*.log
