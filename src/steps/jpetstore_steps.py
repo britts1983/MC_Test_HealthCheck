@@ -44,46 +44,35 @@ class JPetStoreSteps:
         return path
 
     # --------------------------------------------------
-    # HARDENED open_site WITH DEBUG DUMP
+    # OPEN SITE (CORRECT FLOW)
     # --------------------------------------------------
     def open_site(self, url: str):
 
         print("Opening:", url)
         self.driver.get(url)
 
-        # Wait until page fully loads
+        # Wait for full page load
         self.wait.until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
 
-        time.sleep(3)  # headless render buffer
-
-        print("Current URL:", self.driver.current_url)
-        print("Page title:", self.driver.title)
-
-        # Screenshot initial page
+        time.sleep(2)
         self.shot("01_home")
 
-        # Dump page source for debugging
-        debug_file = "artifacts/debug_page.html"
-        os.makedirs("artifacts", exist_ok=True)
-        with open(debug_file, "w", encoding="utf-8") as f:
-            f.write(self.driver.page_source)
+        # Step 1: Click "Enter the Store"
+        self.wait.until(
+            EC.element_to_be_clickable((By.LINK_TEXT, "Enter the Store"))
+        ).click()
 
-        print(f"Page source dumped to {debug_file}")
+        print("Clicked Enter the Store")
 
-        try:
-            # More reliable XPath locator
-            self.wait.until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//a[contains(text(),'Sign')]")
-                )
-            )
-            print("Sign link found.")
-        except TimeoutException:
-            print("Sign link NOT found.")
-            self.shot("01_home_signin_not_found")
-            raise
+        # Step 2: Wait for store homepage
+        self.wait.until(
+            EC.presence_of_element_located((By.LINK_TEXT, "Sign In"))
+        )
+
+        self.shot("02_store_home")
+        print("Store page loaded successfully")
 
     # --------------------------------------------------
     # LOGIN
@@ -91,7 +80,7 @@ class JPetStoreSteps:
     def login(self, username: str, password: str):
 
         self.wait.until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Sign')]"))
+            EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))
         ).click()
 
         self.wait.until(
@@ -107,13 +96,11 @@ class JPetStoreSteps:
         self.driver.find_element(By.NAME, "signon").click()
 
         self.wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//a[contains(text(),'Sign Out')]")
-            )
+            EC.presence_of_element_located((By.LINK_TEXT, "Sign Out"))
         )
 
-        self.shot("02_after_login")
-        print("Login completed")
+        self.shot("03_after_login")
+        print("Login completed successfully")
 
     # --------------------------------------------------
     # BUY FLOW
@@ -128,7 +115,7 @@ class JPetStoreSteps:
             EC.presence_of_element_located((By.XPATH, "//table"))
         )
 
-        self.shot("03_category")
+        self.shot("04_category")
 
         # Click first product
         self.driver.find_elements(By.XPATH, "//table//tr[position()>1]//a")[0].click()
@@ -145,9 +132,9 @@ class JPetStoreSteps:
             EC.element_to_be_clickable((By.LINK_TEXT, "Add to Cart"))
         ).click()
 
-        self.shot("04_cart")
+        self.shot("05_cart")
 
-        # Checkout
+        # Proceed to checkout
         self.wait.until(
             EC.element_to_be_clickable((By.LINK_TEXT, "Proceed to Checkout"))
         ).click()
@@ -159,7 +146,7 @@ class JPetStoreSteps:
         except Exception:
             pass
 
-        self.shot("05_confirm_address")
+        self.shot("06_confirm_address")
 
         # Final submit
         continue_btn = self.wait.until(
@@ -178,11 +165,9 @@ class JPetStoreSteps:
                     or "Order" in d.page_source
                 )
             )
-            print("Order confirmation detected.")
         except TimeoutException:
-            print("Order confirmation NOT detected.")
-            self.shot("06_submit_timeout")
+            self.shot("07_submit_timeout")
             raise
 
-        self.shot("06_after_submit")
-        print("Flow completed successfully")
+        self.shot("07_after_submit")
+        print("Purchase flow completed successfully")
