@@ -12,7 +12,7 @@ pipeline {
     booleanParam(name: 'HEADLESS', defaultValue: true, description: 'Run Chrome headless')
     string(name: 'TIMEOUT', defaultValue: '120', description: 'Timeout in seconds')
     string(name: 'URL', defaultValue: 'https://petstore.octoperf.com/', description: 'Site URL')
-    string(name: 'EMAIL_TO', defaultValue: 'your.email@example.com', description: 'Email recipients (comma separated)')
+    string(name: 'EMAIL_TO', defaultValue: 'brittobaby23@gmail.com', description: 'Email recipients (comma separated)')
   }
 
   triggers {
