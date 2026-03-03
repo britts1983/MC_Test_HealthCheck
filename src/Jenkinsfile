@@ -8,7 +8,7 @@ pipeline {
   }
 
   parameters {
-    choice(name: 'ENV', choices: ['dev', 'prod'], description: 'Target environment')
+    choice(name: 'ENV', choices: ['dev', 'prod','test'], description: 'Target environment')
     booleanParam(name: 'HEADLESS', defaultValue: true, description: 'Run Chrome headless')
     string(name: 'TIMEOUT', defaultValue: '120', description: 'Timeout in seconds')
     string(name: 'URL', defaultValue: 'https://petstore.octoperf.com/', description: 'Site URL')
@@ -49,7 +49,7 @@ pipeline {
       steps {
         script {
 
-          // 🔥 CLEAN OLD ARTIFACTS FIRST
+          // Clean old artifacts here
           sh '''
             rm -rf artifacts
             mkdir -p artifacts/screenshots
@@ -99,7 +99,7 @@ pipeline {
 
     success {
       emailext(
-        subject: "✅ PASS: JPetStore HealthCheck (${params.ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+        subject: "PASS: JPetStore HealthCheck (${params.ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
         to: "${params.EMAIL_TO}",
         mimeType: 'text/html',
         body: """
@@ -115,7 +115,7 @@ pipeline {
 
     failure {
       emailext(
-        subject: "❌ FAIL: JPetStore HealthCheck (${params.ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+        subject: "FAIL: JPetStore HealthCheck (${params.ENV}) - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
         to: "${params.EMAIL_TO}",
         mimeType: 'text/html',
         body: """

@@ -30,9 +30,8 @@ class JPetStoreSteps:
         with open("artifacts/debug_page.html", "w", encoding="utf-8") as f:
             f.write(self.driver.page_source)
 
-    # -------------------------------------------------
-    # OPEN SITE
-    # -------------------------------------------------
+    
+    # Open site from jenkins Parameter
     def open_site(self, url):
         print("Opening:", url)
         self.driver.get(url)
@@ -51,9 +50,8 @@ class JPetStoreSteps:
         save_screenshot(self.driver, self.screenshot_dir, "02_store_home")
         print("Store loaded")
 
-    # -------------------------------------------------
-    # LOGIN
-    # -------------------------------------------------
+
+    # Login goes here
     def login(self, username, password):
         self.wait.until(
             EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))
@@ -81,26 +79,25 @@ class JPetStoreSteps:
         save_screenshot(self.driver, self.screenshot_dir, "03_after_login")
         print("Login successful")
 
-    # -------------------------------------------------
-    # FINAL STABLE BUY FLOW
-    # -------------------------------------------------
+    
+    # Buy section is here
     def buy_flow(self):
         try:
-            # 1) Go to Fish category
+            # Go to Fish category
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Catalog.action?viewCategory=&categoryId=FISH"
             )
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "04_fish_category")
 
-            # 2) Go to product directly
+            # Go to product section
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Catalog.action?viewProduct=&productId=FI-SW-01"
             )
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "05_product_page")
 
-            # 3) Direct add-to-cart URL (NO clicking)
+            # Direct add-to-cart URL
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Cart.action?addItemToCart=&workingItemId=EST-1"
             )
@@ -108,7 +105,7 @@ class JPetStoreSteps:
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "06_cart")
 
-            # 4) Go directly to checkout page
+            # Goto checkout page
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Order.action?newOrderForm="
             )
@@ -116,7 +113,7 @@ class JPetStoreSteps:
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "07_checkout_page")
 
-            # 5) Continue order (if required)
+            # Continue order (if required)
             try:
                 continue_btn = self.wait.until(
                     EC.element_to_be_clickable((By.NAME, "newOrder"))
@@ -128,13 +125,13 @@ class JPetStoreSteps:
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "08_after_continue")
 
-            # 6) Final submit
+            # Final submit
             submit_btn = self.wait.until(
                 EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))
             )
             submit_btn.click()
 
-            # Wait for order confirmation by URL
+            # Wait for order confirmation
             self.wait.until(
                 lambda d: "viewOrder" in d.current_url or "Order" in d.current_url
             )
