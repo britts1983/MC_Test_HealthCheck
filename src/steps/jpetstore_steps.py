@@ -30,8 +30,9 @@ class JPetStoreSteps:
         with open("artifacts/debug_page.html", "w", encoding="utf-8") as f:
             f.write(self.driver.page_source)
 
-    
-    # Open site from jenkins Parameter
+    # -------------------------------------------------
+    # OPEN SITE
+    # -------------------------------------------------
     def open_site(self, url):
         print("Opening:", url)
         self.driver.get(url)
@@ -50,8 +51,9 @@ class JPetStoreSteps:
         save_screenshot(self.driver, self.screenshot_dir, "02_store_home")
         print("Store loaded")
 
-
-    # Login goes here
+    # -------------------------------------------------
+    # LOGIN
+    # -------------------------------------------------
     def login(self, username, password):
         self.wait.until(
             EC.element_to_be_clickable((By.LINK_TEXT, "Sign In"))
@@ -61,13 +63,11 @@ class JPetStoreSteps:
             EC.presence_of_element_located((By.NAME, "username"))
         )
 
-        u = self.driver.find_element(By.NAME, "username")
-        p = self.driver.find_element(By.NAME, "password")
+        self.driver.find_element(By.NAME, "username").clear()
+        self.driver.find_element(By.NAME, "username").send_keys(username)
 
-        u.clear()
-        p.clear()
-        u.send_keys(username)
-        p.send_keys(password)
+        self.driver.find_element(By.NAME, "password").clear()
+        self.driver.find_element(By.NAME, "password").send_keys(password)
 
         self.driver.find_element(By.NAME, "signon").click()
 
@@ -79,8 +79,9 @@ class JPetStoreSteps:
         save_screenshot(self.driver, self.screenshot_dir, "03_after_login")
         print("Login successful")
 
-    
-    # Buy section is here
+    # -------------------------------------------------
+    # FINAL STABLE BUY FLOW WITH ORDER ID EXTRACTION
+    # -------------------------------------------------
     def buy_flow(self):
         try:
             # Go to Fish category
@@ -90,30 +91,28 @@ class JPetStoreSteps:
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "04_fish_category")
 
-            # Go to product section
+            # Go to product
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Catalog.action?viewProduct=&productId=FI-SW-01"
             )
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "05_product_page")
 
-            # Direct add-to-cart URL
+            # Add to cart directly
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Cart.action?addItemToCart=&workingItemId=EST-1"
             )
-
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "06_cart")
 
-            # Goto checkout page
+            # Go to checkout
             self.driver.get(
                 "https://petstore.octoperf.com/actions/Order.action?newOrderForm="
             )
-
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "07_checkout_page")
 
-            # Continue order (if required)
+            # Click Continue (if present)
             try:
                 continue_btn = self.wait.until(
                     EC.element_to_be_clickable((By.NAME, "newOrder"))
@@ -125,24 +124,30 @@ class JPetStoreSteps:
             self.wait_ready()
             save_screenshot(self.driver, self.screenshot_dir, "08_after_continue")
 
-            # Final submit
-            submit_btn = self.wait.until(
-                EC.element_to_be_clickable((By.XPATH, "//input[@type='submit']"))
+            # 🔥 FINAL CONFIRM BUTTON
+            confirm_button = self.wait.until(
+                EC.element_to_be_clickable((By.XPATH, "//input[@value='Confirm']"))
             )
-            submit_btn.click()
+            confirm_button.click()
 
-            # Wait for order confirmation
+            # Wait for actual order confirmation
             self.wait.until(
-                lambda d: "viewOrder" in d.current_url or "Order" in d.current_url
+                lambda d: "viewOrder" in d.current_url and "orderId=" in d.current_url
             )
 
             time.sleep(2)
+
+            current_url = self.driver.current_url
+            order_id = current_url.split("orderId=")[-1]
+
             save_screenshot(self.driver, self.screenshot_dir, "09_success")
 
+            print("Order ID:", order_id)
             print("Purchase completed successfully")
-            return "Order placed successfully"
 
-        except Exception:
+            return f"Order ID: {order_id}"
+
+        except Exception as e:
             save_screenshot(self.driver, self.screenshot_dir, "99_failure")
             self.dump_page()
-            raise
+            raise e
