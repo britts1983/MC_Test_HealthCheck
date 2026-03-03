@@ -16,7 +16,6 @@ pipeline {
   }
 
   triggers {
-    // Every 30 minutes (change as you want)
     cron('H/30 * * * *')
   }
 
@@ -28,6 +27,7 @@ pipeline {
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
@@ -48,15 +48,20 @@ pipeline {
     stage('Run Test') {
       steps {
         script {
-          // Map env -> credentialsId
+
+          // 🔥 CLEAN OLD ARTIFACTS FIRST
+          sh '''
+            rm -rf artifacts
+            mkdir -p artifacts/screenshots
+          '''
+
           def credId = (params.ENV == 'prod') ? 'jpetstore-prod' : 'jpetstore-dev'
 
           withCredentials([usernamePassword(credentialsId: credId, usernameVariable: 'APP_USER', passwordVariable: 'APP_PASS')]) {
+
             sh """
               set -e
               . ${VENV_DIR}/bin/activate
-              mkdir -p ${ARTIFACTS_DIR}
-              mkdir -p ${SCREENSHOTS_DIR}
 
               python ${PYTHONPATH}/run.py \
                 --env ${params.ENV} \
@@ -86,10 +91,9 @@ pipeline {
   }
 
   post {
-    always {
-      // Always archive report + screenshots so you can open/download from Jenkins build
-      archiveArtifacts artifacts: 'artifacts/health_report.html, artifacts/screenshots/*.png, artifacts/error.png', allowEmptyArchive: true
 
+    always {
+      archiveArtifacts artifacts: 'artifacts/health_report.html, artifacts/screenshots/*.png, artifacts/error.png', allowEmptyArchive: true
       echo "Pipeline finished"
     }
 
