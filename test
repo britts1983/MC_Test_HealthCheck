@@ -1,0 +1,145 @@
+pipeline {
+    agent {
+        label "built-in"
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '30'))
+        timeout(time: 30, unit: 'MINUTES') // Timeout for the entire pipeline
+        sendSplunkConsoleLog()
+        disableConcurrentBuilds()
+    }
+    stages {
+        stage("checkout") {
+            options {
+                timeout(time: 5, unit: 'MINUTES') // Timeout for this specific stage
+            }
+            steps {
+                script {
+                    if (checkGitavailability() == '200') {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: '*/main']],
+                            userRemoteConfigs: [
+                                [url: 'https://github.axa.com/aljdevops/monitoring-jenkins.git',
+                                 credentialsId: 'ALJ_OPS_GITHUB_MACHINE_USER']
+                            ]
+                        ])
+                    }
+                }
+            }
+        }
+        stage('Build') {
+            options {
+                timeout(time: 20, unit: 'MINUTES') // Timeout for this specific stage
+            }
+            steps {
+                script {
+                     echo "params.login: ${params.login}"
+                     echo "params.login2: ${params.login2}"
+                    withCredentials([usernamePassword(credentialsId: params.login, usernameVariable: 'CRED_USR', passwordVariable: 'CRED_PSW'),
+                                     usernamePassword(credentialsId: params.login2, usernameVariable: 'CRED2_USR', passwordVariable: 'CRED2_PSW'),
+                                     string(credentialsId: "MPI-TOD-Token", variable: 'TOKEN'),
+                                     string(credentialsId: "TOD-API-Token", variable: 'API_TOKEN')]) {
+                        def baseCmd = '--yaml-file=$WORKSPACE/applications/adept/functional-check.yml --userid=${CRED_USR} --password=${CRED_PSW} --userid2=${CRED2_USR} --password2=${CRED2_PSW} --token=${TOKEN} --apitoken=${API_TOKEN}'
+                        echo "baseCmd: ${baseCmd}"
+                        println("Execute Test case $JOB_NAME - Start")
+                        sh """
+                        set +x
+                        source /etc/profile.d/pyenv.sh
+                        set -x
+                        python ./run_selenium_test.py ${baseCmd}
+                        """
+                    }
+                    println("Execute Test case $JOB_NAME - End")
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                try {
+                  // Ensure the file/directory path is validated and fixed to avoid any accidental deletion.
+                  // For example, using an environment variable that is controlled.
+                  def targetPath = "${env.WORKSPACE}/logs/*"
+                  sh "rm -rf ${targetPath}"
+                  echo "Files at ${targetPath} have been deleted."
+                } catch (err) {
+                  // Log and handle error securely.
+                  echo "Error during file deletion: ${err}"
+                  error "Deletion step failed."
+                }
+
+                // Code for Dyntrace for Adept goes here
+            // -------------------------------
+
+            def currentResult = currentBuild.currentResult ?: "UNKNOWN"
+            def previousResult = currentBuild.getPreviousBuild()?.result ?: "UNKNOWN"
+            def status = null
+            def result = currentResult
+            def duration = currentBuild.duration / 1000
+
+            if (currentResult == "SUCCESS") {
+                status = "OK"
+            } else if (previousResult != "UNKNOWN" && previousResult != "SUCCESS") {
+                status = "UNSTABLE"
+            } else {
+                echo "Skipping first failure"
+            }
+
+            if (status) {
+                echo "Sending to Dynatrace: ${status}"
+
+                try {
+                    withCredentials([string(credentialsId: 'DT_TOKEN', variable: 'DT_TOKEN')]) {
+
+                        def payload = """{
+                            "eventType": "CUSTOM_INFO",
+                            "title": "Adept Functional Check",
+                            "message": "Execution result",
+                            "properties": {
+                                "job_name": "${env.JOB_NAME}",
+                                "status": "${status}",
+                                "build_number": "${env.BUILD_NUMBER}",
+                                "result": "${result}",
+                                "duration": "${duration}"
+                            }
+                        }"""
+
+                        writeFile file: 'dynatrace_payload.json', text: payload
+
+                        sh '''
+                        curl -s -X POST "https://lpi52873.live.dynatrace.com/api/v2/events/ingest" \
+                        -H "Authorization: Api-Token $DT_TOKEN" \
+                        -H "Content-Type: application/json" \
+                        --data @dynatrace_payload.json || true
+                        '''
+                    }
+
+                } catch (e) {
+                    echo "Dynatrace block failed but pipeline continues"
+                }
+            }
+
+
+
+
+        }
+
+            archiveArtifacts allowEmptyArchive: true, artifacts: "screenshots\\**\\*.png,reports\\*.html,downloads\\**", caseSensitive: false, onlyIfSuccessful: false
+            dir("${env.WORKSPACE}@tmp") {
+                cleanWs()
+            }
+        }
+    }
+}
+
+def checkGitavailability() {
+    def response = httpRequest(
+        url: 'https://github.axa.com/aljdevops/monitoring-jenkins.git',
+        validResponseCodes: '100:599',
+        quiet: true)
+        return "${response.status}"
+}
+
