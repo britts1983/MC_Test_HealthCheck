@@ -9,98 +9,95 @@ pipeline {
         stage('Realtime Monitoring') {
             steps {
                 script {
+
                     withCredentials([
                         string(credentialsId: 'DT_TOKEN', variable: 'DT_TOKEN')
                     ]) {
+
                         echo "STARTING REALTIME MONITORING"
-                        def dynatraceUrl = "https://lpi52873.live.dynatrace.com/api/v2/events/ingest"
-                        def realtimeFolder = Jenkins.instance.getItemByFullName("group-jobs/realtime")
+
+                        def dynatraceUrl =
+                        "https://lpi52873.live.dynatrace.com/api/v2/events/ingest"
+
+                        def realtimeFolder =
+                        Jenkins.instance.getItemByFullName(
+                            "group-jobs/realtime"
+                        )
 
                         if (realtimeFolder == null) {
                             error "Realtime folder not found"
                         }
-
-                        // Iterate over each application folder
                         realtimeFolder.getItems().each { appFolder ->
                             try {
+
                                 if (!(appFolder instanceof Folder)) {
                                     return
                                 }
 
-                                def appName = appFolder.getName()
+                                def appName =
+                                appFolder.getName()
+
                                 echo "APPLICATION : ${appName}"
-                                def overallStatus = "SUCCESS"
-                                def jobsText = ""
-                                int unstableCount = 0
-
-                                // Variables to store last job info for the report
-                                def lastJobFullName = ""
-                                def lastJobResult = ""
-                                def lastChecked = ""
-
-                                // Iterate over each job inside the application folder
                                 appFolder.getItems().each { job ->
+
                                     try {
+
+                                        def overallStatus = "SUCCESS"
                                         def build = job.getLastSuccessfulBuild()
+ 
                                         if (build == null) {
+
                                             echo "NO BUILD : ${job.getName()}"
                                             return
                                         }
-
                                         def result = build.getResult()?.toString() ?: "UNKNOWN"
                                         def finalResult = "SUCCESS"
                                         if (result != "SUCCESS") {
+
                                             finalResult = "UNSTABLE"
-                                            unstableCount++
+                                            overallStatus = "UNSTABLE"
                                         }
 
-                                        lastJobFullName = job.getFullName()
-                                        lastJobResult = finalResult
-                                        lastChecked = new Date().format("yyyy-MM-dd HH:mm:ss")
-
-                                        def duration = "N/A" // Could be improved to actual duration if needed
-
-                                        // Append job info to jobsText (if needed)
-                                        jobsText += "result: ${finalResult}; job: ${job.getFullName()}; duration: ${duration}; checked: ${lastChecked} || "
+                                        def lastChecked =
+                                        new Date().format(
+                                            "yyyy-MM-dd HH:mm:ss"
+                                        )
 
                                         echo "JOB : ${job.getFullName()}"
                                         echo "RESULT : ${finalResult}"
                                         echo "LAST CHECKED : ${lastChecked}"
 
+                                        sh """
+                                            set -x
+                                            curl -v --fail -X POST '${dynatraceUrl}' \\
+                                            -H 'Authorization: Api-Token ${DT_TOKEN}' \\
+                                            -H 'Content-Type: application/json' \\
+                                            -d '{
+                                                "eventType":"CUSTOM_INFO",
+                                                "title":"REALTIME APPLICATION STATUS",
+                                                "properties":{
+                                                    "application":"${appName}",
+                                                    "overall_status":"${overallStatus}",
+                                                    "job_name":"${job.getFullName()}",
+                                                    "job_status":"${finalResult}",
+                                                    "checked":"${lastChecked}",
+                                                    "type":"REALTIME"
+                                                }
+                                            }'
+
+                                            echo "AFTER CURL"
+                                            echo \$?
+                                        """
+
                                     } catch (Exception ex) {
+
+                                        echo "ERROR : ${ex.toString()}"
                                         echo "SKIPPING JOB : ${job.getFullName()}"
                                     }
                                 }
 
-                                if (unstableCount > 0) {
-                                    overallStatus = "UNSTABLE"
-                                }
-
-                                echo "FINAL STATUS : ${overallStatus}"
-
-                                // Send data to Dynatrace
-                                sh """
-                                    set -x
-                                    curl -v --fail -X POST '${dynatraceUrl}' \\
-                                    -H 'Authorization: Api-Token ${DT_TOKEN}' \\
-                                    -H 'Content-Type: application/json' \\
-                                    -d '{
-                                        "eventType":"CUSTOM_INFO",
-                                        "title":"REALTIME APPLICATION STATUS",
-                                        "properties":{
-                                            "application":"${appName}",
-                                            "overall_status":"${overallStatus}",
-                                            "job_name":"${lastJobFullName}",
-                                            "job_status":"${lastJobResult}",
-                                            "checked":"${lastChecked}",
-                                            "type":"REALTIME"
-                                        }
-                                    }'
-                                    echo "AFTER CURL"
-                                    echo \$?
-                                """
-
                             } catch (Exception ex) {
+
                                 echo "ERROR : ${ex.toString()}"
                                 ex.printStackTrace()
                                 echo "SKIPPING APPLICATION : ${appFolder.getName()}"
