@@ -1,119 +1,102 @@
-import jenkins.model.*
-import hudson.model.*
-import com.cloudbees.hudson.plugins.folder.Folder
-
-pipeline {
-    agent any
-
-    stages {
-        stage('Realtime Monitoring') {
-            steps {
-                script {
-
-                    withCredentials([
-                        string(credentialsId: 'DT_TOKEN', variable: 'DT_TOKEN')
-                    ]) {
-
-                        echo "STARTING REALTIME MONITORING"
-
-                        def dynatraceUrl =
-                        "https://lpi52873.live.dynatrace.com/api/v2/events/ingest"
-
-                        def realtimeFolder =
-                        Jenkins.instance.getItemByFullName(
-                            "group-jobs/realtime"
-                        )
-
-                        if (realtimeFolder == null) {
-                            error "Realtime folder not found"
-                        }
-                        realtimeFolder.getItems().each { appFolder ->
-                            try {
-
-                                if (!(appFolder instanceof Folder)) {
-                                    return
-                                }
-
-                                def appName =
-                                appFolder.getName()
-
-                                echo "APPLICATION : ${appName}"
-                                appFolder.getItems().each { job ->
-
-                                    try {
-
-                                        def overallStatus = "SUCCESS"
-                                        def build = job.getLastSuccessfulBuild()
- 
-                                        if (build == null) {
-
-                                            echo "NO BUILD : ${job.getName()}"
-                                            return
-                                        }
-                                        def result = build.getResult()?.toString() ?: "UNKNOWN"
-                                        def finalResult = "SUCCESS"
-                                        if (result != "SUCCESS") {
-
-                                            finalResult = "UNSTABLE"
-                                            overallStatus = "UNSTABLE"
-                                        }
-
-                                        def lastChecked =
-                                        new Date().format(
-                                            "yyyy-MM-dd HH:mm:ss"
-                                        )
-
-                                        echo "JOB : ${job.getFullName()}"
-                                        echo "RESULT : ${finalResult}"
-                                        echo "LAST CHECKED : ${lastChecked}"
-
-                                        sh """
-                                            set -x
-                                            curl -v --fail -X POST '${dynatraceUrl}' \\
-                                            -H 'Authorization: Api-Token ${DT_TOKEN}' \\
-                                            -H 'Content-Type: application/json' \\
-                                            -d '{
-                                                "eventType":"CUSTOM_INFO",
-                                                "title":"REALTIME APPLICATION STATUS",
-                                                "properties":{
-                                                    "application":"${appName}",
-                                                    "overall_status":"${overallStatus}",
-                                                    "job_name":"${job.getFullName()}",
-                                                    "job_status":"${finalResult}",
-                                                    "checked":"${lastChecked}",
-                                                    "type":"REALTIME"
-                                                }
-                                            }'
-
-                                            echo "AFTER CURL"
-                                            echo \$?
-                                        """
-
-                                    } catch (Exception ex) {
-
-                                        echo "ERROR : ${ex.toString()}"
-                                        echo "SKIPPING JOB : ${job.getFullName()}"
-                                    }
-                                }
-
-                            } catch (Exception ex) {
-
-                                echo "ERROR : ${ex.toString()}"
-                                ex.printStackTrace()
-                                echo "SKIPPING APPLICATION : ${appFolder.getName()}"
-                            }
-                        }
-
-                        echo "DYNATRACE UPDATE COMPLETED"
-                    }
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            echo "PIPELINE FINISHED"
-        }
-    }
-}
+ADEPT	OK	Result : OK     applications/adept/functional-check	77.9	2026-05-20 12:20:29
+AG Portal Cloud External	OK	
+Result : OK     applications/agportal-cloud/external/broker-application
+Result : OK     applications/agportal-cloud/external/commission
+Result : OK     applications/agportal-cloud/external/corporate-search
+Result : OK     applications/agportal-cloud/external/policy-search
+Result : OK     applications/agportal-cloud/external/registration-inquiry
+Result : OK     applications/agportal-cloud/external/training-history
+154.2	2026-05-20 12:23:46
+AG Portal Cloud Internal	OK	
+Result : OK     applications/agportal-cloud/internal/policy-search
+Result : OK     applications/agportal-cloud/internal/sales-score
+Result : OK     applications/agportal-cloud/internal/special-agency
+139.1	2026-05-20 12:18:31
+AG Portal NTTGW	NG	Result : NG     applications/agportal-cloud/nttgw-functional-check	18.4	2026-05-20 12:13:55
+AIS	OK	Result : OK     applications/ais/functional-check	58.0	2026-05-20 11:57:09
+AML	OK	Result : OK     applications/aml/functional-check	115.5	2026-05-20 12:01:06
+ARMS	OK	Result : OK     applications/arms/functional-check	78.8	2026-05-20 12:19:32
+AXA HP SPW	OK	Result : OK     applications/axa-hp/spw-functional-check	62.1	2026-05-20 12:23:13
+Banca Portal	NG	
+Result : NG     applications/bancassurance-portal-000/nttgw-accessonly-functional-check
+Result : OK     applications/bancassurance-portal-000/functional-check
+98.0	2026-05-20 12:07:50
+Bank Account	OK	Result : OK     applications/bank-account/functional-check	22.2	2026-05-20 12:18:37
+CANWEB	OK	Result : OK     applications/canweb/functional-check	104.5	2026-05-20 12:23:55
+CCI Commission	OK	Result : OK     applications/cci-commission/functional-check	62.3	2026-05-20 12:18:13
+CS Portal	OK	
+Result : OK     applications/cap-portal/functional-check
+Result : OK     applications/cs-portal/address-change-functional-check
+Result : OK     applications/cs-portal/name-change-functional-check
+Result : OK     applications/cs-portal/proxy-request-functional-check
+Result : OK     applications/cs-portal/webbar-functional-check
+84.8	2026-05-20 12:12:05
+Claim Advise(CAS)	OK	Result : OK     applications/claims-advice-cas/functional-check	51.6	2026-05-20 12:15:02
+Claims F2F	OK	Result : OK     applications/claims-f2f/functional-check	94.3	2026-05-20 12:20:46
+Claims ICM	OK	
+Result : OK     applications/icm-claims-payment-workflow/icm-admin
+Result : OK     applications/icm-claims-payment-workflow/icm-general
+80.9	2026-05-20 12:24:27
+Cockpit360	OK	Result : OK     applications/cockpit-360/functional-check	153.8	2026-05-20 12:18:45
+Common document upload service	OK	
+Result : OK     applications/commom-document-upload-service/external-functional-check
+Result : OK     applications/commom-document-upload-service/internal-functional-check
+65.9	2026-05-20 12:21:15
+Compass CCI/FA	OK	
+Result : OK     applications/compass/aura-api-check
+Result : OK     applications/compass/customer-list-functional-check
+Result : OK     applications/compass/gmo-api-check
+Result : OK     applications/compass/www2-api-check
+277.5	2026-05-20 12:20:49
+Compass PB/CO	OK	
+Result : OK     applications/agportal-cloud/external/compass-functional-check
+Result : OK     applications/agportal-cloud/internal/compass-functional-check
+171.1	2026-05-20 12:22:58
+DUAL	OK	Result : OK     applications/dual/functional-check	29.7	2026-05-20 12:23:41
+Dampo Digital	OK	Result : OK     applications/dampo-digital/prod/functional-check	184.6	2026-05-20 12:25:15
+Digital Provision	OK	Result : OK     applications/digital-provision/pdf-skip-functional-check	48.0	2026-05-20 12:25:59
+Dual	OK	Result : OK     applications/dual/functional-check	29.7	2026-05-20 12:23:41
+Emma	OK	
+Result : OK     applications/emma/notification
+Result : OK     applications/emma/policy-details
+Result : OK     applications/emma/policy-loan
+80.6	2026-05-20 12:18:31
+Expense Tool & FTHF	OK	Result : OK     applications/eopt/functional-check	85.9	2026-05-20 12:20:37
+FPP	OK	Result : OK     applications/compass/cashless-premium-collection-management-system	61.7	2026-05-20 12:24:13
+For The Happy Future	OK	Result : OK     applications/for-the-happy-future/functional-check	150.6	2026-05-20 12:13:42
+HPM	NG	
+Result : NG     applications/hpm/owner-functional-check
+Result : OK     applications/hpm/owner-functional-check-report-creation
+Result : OK     applications/hpm/sales-functional-check
+109.6	2026-05-20 12:26:59
+IAP	OK	
+Result : OK     applications/integrated-annuity-payment/prod/check-address-master
+Result : OK     applications/integrated-annuity-payment/prod/check-bank-master
+Result : OK     applications/integrated-annuity-payment/prod/download-file
+Result : OK     applications/integrated-annuity-payment/prod/login
+Result : OK     applications/integrated-annuity-payment/prod/px-calculator
+79.9	2026-05-20 12:11:31
+Life-J	OK	Result : OK     applications/life-j/prod/functional-check	18.7	2026-05-20 12:24:29
+MyNumber	OK	Result : OK     applications/my-number-management/prod/functional-check	85.4	2026-05-20 12:25:35
+NBWF (Cloud)	OK	Result : OK     applications/new-business-underwriting-workflow/cloud-functional-check	25.5	2026-05-20 12:26:37
+ODS	OK	Result : OK     applications/compass/ods-authorization-management-tool	62.6	2026-05-20 12:12:15
+OE Workflow	OK	Result : OK     applications/operational-efficiency-workflow/functional-check	55.3	2026-05-20 12:18:05
+PDWF	OK	Result : OK     applications/claims-pdwf/functional-check	54.8	2026-05-20 12:24:06
+PeopleSoft	OK	Result : OK     applications/people-soft-resources-management/functional-check	29.8	2026-05-19 16:12:42
+Printing DR	OK	Result : OK     applications/printing-dr/functional-check	74.8	2026-05-20 12:19:26
+QIT WebOnline	OK	Result : OK     applications/ndhats/qit-functional-check	45.1	2026-05-20 12:23:56
+S&L	OK	Result : OK     applications/sl/weekday-functional-check	98.1	2026-05-20 12:23:49
+S&L Life-J	OK	Result : OK     applications/sl-lifej/functional-check	56.2	2026-05-20 12:18:06
+Seido Portal	OK	Result : OK     applications/seido-portal/prod/functional-check	78.7	2026-05-20 12:20:30
+SurrenderWeb	OK	Result : OK     applications/cs-portal/surrender-functional-check	81.6	2026-05-20 12:12:36
+TimePro	OK	Result : OK     applications/employee-attendance-management-time-pro-v2/functional-check	32.6	2026-05-20 12:26:44
+WPM	OK	
+Result : OK     applications/wpm/wpm159-functional-check
+Result : OK     applications/wpm/wpm160-functional-check
+72.5	2026-05-20 12:26:24
+Web Disease Search	OK	
+Result : OK     applications/web-disease-search/external-functional-check
+Result : OK     applications/web-disease-search/internal-functional-check
+60.6	2026-05-20 12:10:12
+Web Service Sheet	OK	Result : OK     applications/web-service-sheet/functional-check	70.9	2026-05-20 12:00:22
+i-Win	OK	Result : OK     applications/i-win/functional-check	57.7	2026-05-20 12:22:09
