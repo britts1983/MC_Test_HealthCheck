@@ -5,6 +5,8 @@ import com.cloudbees.hudson.plugins.folder.Folder
 import com.cloudbees.groovy.cps.NonCPS
 import groovy.json.JsonOutput
 
+def realtimeSummary = []
+
 pipeline {
 
     agent {
@@ -125,6 +127,7 @@ pipeline {
                                         properties: [
                                             application: row.application,
                                             overall_status: row.overall_status,
+                                            job_details: row.job_details,
                                             checked:  row.checked,
                                             type: "APPLICATION"
                                         ]
@@ -165,6 +168,13 @@ pipeline {
 
                                 def appRow = applicationRows[a]
                                 echo "${appRow.application} : ${appRow.overall_status}"
+                                if (appRow.jobs != null) {
+                                    for (
+                                        int j = 0; j < appRow.jobs.size(); j++
+                                    ) {
+                                        echo "CHILD JOB : ${appRow.jobs[j]}"
+                                    }
+                                }
                             }
 
                             echo "DYNATRACE UPDATE COMPLETED"
@@ -217,20 +227,30 @@ def getRealtimeRows() {
         def jobs = new ArrayList( appFolder.getItems())
         for (
             int j = 0;j < jobs.size();j++) {
-            def job =  jobs[j]
+            def job =  jobs[j]a
             if (!(job instanceof Job)) {
                 continue
             }
             def finalResult =  "SUCCESS"
             try {
-                def build =  job.getLastCompletedBuild()
+
+                def build = item.getLastCompletedBuild()
+                def currentStatus = "OK"
                 if (
-                    build == null ||  build.getResult() == null ||  build.getResult().toString() != "SUCCESS"
+                    build == null || build.getResult() == null || build.getResult().toString() != "SUCCESS"
                 ) {
-                    finalResult = "UNSTABLE"
+                    currentStatus = "NG"
+                    applicationResults[appName]["status"] = "NG"
                 }
+                applicationResults[appName]["jobs"].add(
+                    "${currentStatus} : ${fullName}"
+                )
+
             } catch (Exception ex) {
-                finalResult =  "UNSTABLE"
+                applicationResults[appName]["status"] = "NG"
+                applicationResults[appName]["jobs"].add(
+                    "NG : ${fullName}"
+                )
             }
 
             rows.add([
@@ -267,7 +287,8 @@ def getApplicationHealthRows() {
        rows.add([
             application: appName,
             overall_status: applicationResults[appName]["status"],
-            job_details: applicationResults[appName]["jobs"].join(" | "),
+            job_details: applicationResults[appName]["jobs"].join("\n "),
+            jobs: applicationResults[appName]["jobs"],
             checked:
             new Date().format(
                 "yyyy-MM-dd HH:mm:ss"
@@ -429,20 +450,25 @@ if (!monitorJob) {
             ]
         }
 
+        def childStatus = "OK"
         try {
-
             def build = item.getLastCompletedBuild()
             if (
                 build == null ||
                 build.getResult() == null ||
                 build.getResult().toString() != "SUCCESS"
             ) {
-                applicationResults[appName] ["status"] =  "NG"
-            }
 
+                childStatus = "NG"
+                applicationResults[appName]["status"] = "NG"
+            }
         } catch (Exception ex) {
-            applicationResults[appName] ["status"] =  "NG"
+            childStatus = "NG"
+            applicationResults[appName]["status"] = "NG"
         }
+        applicationResults[appName]["jobs"].add(
+            "${childStatus} : ${fullName}"
+        )
     }
 }
 
