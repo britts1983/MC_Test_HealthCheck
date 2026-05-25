@@ -87,6 +87,7 @@ pipeline {
                                             overall_status: overallStatus,
                                             job_name: row.job_name,
                                             job_status: row.job_status,
+                                            job_duration : row.job_duration.toString(),
                                             checked: row.checked,
                                             type: "REALTIME"
                                         ]
@@ -128,6 +129,8 @@ pipeline {
                                             application: row.application,
                                             overall_status: row.overall_status,
                                             job_details: row.job_details,
+                                            jobs:row.jobs.join(" | "),
+                                            job_duration : row.job_duration.toString(),
                                             checked:  row.checked,
                                             type: "APPLICATION"
                                         ]
@@ -168,6 +171,7 @@ pipeline {
 
                                 def appRow = applicationRows[a]
                                 echo "${appRow.application} : ${appRow.overall_status}"
+                                echo "APP Duaration : ${appRow.job_duration}"
                                 if (appRow.jobs != null) {
                                     for (
                                         int j = 0; j < appRow.jobs.size(); j++
@@ -200,8 +204,6 @@ pipeline {
         }
     }
 }
-
-
 @NonCPS
 def getRealtimeRows() {
 
@@ -227,36 +229,32 @@ def getRealtimeRows() {
         def jobs = new ArrayList( appFolder.getItems())
         for (
             int j = 0;j < jobs.size();j++) {
-            def job =  jobs[j]a
+            def job =  jobs[j]
             if (!(job instanceof Job)) {
                 continue
             }
-            def finalResult =  "SUCCESS"
+            def finalResult = "SUCCESS"
+            def duration = 0
+
             try {
-
-                def build = item.getLastCompletedBuild()
-                def currentStatus = "OK"
+                def build = job.getLastCompletedBuild()
+                duration = build ? build.getDuration() / 1000 : 0
                 if (
-                    build == null || build.getResult() == null || build.getResult().toString() != "SUCCESS"
+                    build == null ||
+                    build.getResult() == null ||
+                    build.getResult().toString() != "SUCCESS"
                 ) {
-                    currentStatus = "NG"
-                    applicationResults[appName]["status"] = "NG"
+                    finalResult = "UNSTABLE"
                 }
-                applicationResults[appName]["jobs"].add(
-                    "${currentStatus} : ${fullName}"
-                )
-
             } catch (Exception ex) {
-                applicationResults[appName]["status"] = "NG"
-                applicationResults[appName]["jobs"].add(
-                    "NG : ${fullName}"
-                )
+                finalResult = "UNSTABLE"
             }
 
             rows.add([
                 application:  appName,
                 job_name:  job.getFullName().toString(),
                 job_status: finalResult,
+                job_duration: duration,
                 checked: new Date().format( "yyyy-MM-dd HH:mm:ss").toString()
             ])
         }
@@ -265,17 +263,14 @@ def getRealtimeRows() {
     return rows
 }
 
-
 @NonCPS
 def getApplicationHealthRows() {
 
     def rows = []
     def applicationFolder =Jenkins.instance.getItemByFullName("applications")
-
     if (applicationFolder == null) {
         return rows
     }
-
     def applicationResults = [:] 
     scanApplicationFolder( 
         applicationFolder,
@@ -284,11 +279,13 @@ def getApplicationHealthRows() {
     for (
         int i = 0; i < appNames.size();  i++) {
         def appName = appNames[i].toString()
+        echo "ROW Duration: ${applicationResults[appName]["duration"]}"
        rows.add([
             application: appName,
             overall_status: applicationResults[appName]["status"],
             job_details: applicationResults[appName]["jobs"].join("\n "),
             jobs: applicationResults[appName]["jobs"],
+            job_duration: applicationResults[appName]["duration"],
             checked:
             new Date().format(
                 "yyyy-MM-dd HH:mm:ss"
@@ -318,11 +315,9 @@ def scanApplicationFolder(
             scanApplicationFolder( item,applicationResults )
             continue
         }
-
         if (!(item instanceof Job)) {
             continue
         }
-
         def fullName = item.getFullName().toString()
         def excludePatterns = [
             "/preprod/",
@@ -331,7 +326,6 @@ def scanApplicationFolder(
             "/uat/",
             "/test/"
         ]
-
         boolean excluded = false
         for (int e = 0; e < excludePatterns.size(); e++) {
             if (
@@ -359,7 +353,16 @@ def scanApplicationFolder(
             "applications/webedi-ts",
             "applications/customer-master-data-management",
             "applications/claims-reception-web",
-            "applications/cis-plus"
+            "applications/cis-plus",
+            "applications/sl/weekday-functional-check-old",
+            "applications/sl-lifej/functional-check-old",
+            " applications/digital-provision/functional-check",
+            "applications/icm-claims-payment-workflow/functional-check",
+            "applications/claims-pdwf-holiday/functional-check",
+            "applications/bancassurance-portal-000/assurance-functional-check",
+            "applications/bancassurance-portal-000/functional-check",
+            "applications/axa-hp/spw-usd-functional-check",
+            "applications/axa-hp/spw-aud-functional-check"
         ]
         boolean blocked = false
         for (int b = 0; b < blockedJobs.size(); b++ )
@@ -435,28 +438,135 @@ def scanApplicationFolder(
 if (!monitorJob) {
     continue
 }
-        def parts = fullName.tokenize("/")
-        if (parts.size() < 2) {
-            continue
-        }
+def parts = fullName.tokenize("/")
+if (parts.size() < 2) {
+    continue
+}
+def appName = parts[1].toString()
+def jobShortName = parts[parts.size() - 1].toString()
+if (parts[1] == "agportal-cloud") {
 
-        def appName = parts[1].toString()
-        if (
-            !applicationResults.containsKey(appName)
-        ) {
-            applicationResults[appName] =[
-                status : "OK",
-                jobs : []
+    if (parts.size() > 3 && parts[2] == "external" &&
+        (
+            jobShortName == "broker-application" ||
+            jobShortName == "commission" ||
+            jobShortName == "corporate-search" ||
+            jobShortName == "policy-search" ||
+            jobShortName == "registration-inquiry" ||
+            jobShortName == "training-history"
+        )
+    ) {
+        appName = "AG Portal Cloud External"
+    }
+    else if (parts.size() > 3 && parts[2] == "internal" &&
+        (
+            jobShortName == "policy-search" ||
+            jobShortName == "sales-score" ||
+            jobShortName == "special-agency"
+        )
+    ) {
+        appName = "AG Portal Cloud Internal"
+    }
+    else if (jobShortName == "nttgw-functional-check") {
+        appName = "AG Portal NTTGW"
+    }
+    else if (jobShortName == "compass-functional-check") {
+        appName = "Compass PB/CO"
+    }
+    else {
+        continue
+    }
+}
+
+else if (parts[1] == "cs-portal") {
+    if (jobShortName == "surrender-functional-check"){
+        appName ="SurrenderWeb"
+    }
+    else{
+        appName ="cs-portal"
+    }
+}
+else if (parts[1] == "employee-attendance-management-time-pro-v2") {
+    
+        appName ="TimePro"
+    }
+else if (parts[1] == "ndhats") {
+    if (jobShortName == "qit-functional-check"){
+        appName ="QIT WebOnline"
+    }
+    else{
+        appName ="cs-ndhats"
+    }
+}
+else if (parts[1] == "compass") {
+    if (
+        jobShortName == "aura-api-check" ||
+        jobShortName == "customer-list-functional-check" ||
+        jobShortName == "gmo-api-check" ||
+        jobShortName == "www2-api-check"
+    ) {
+        appName = "Compass CCI/FA"
+    }
+    else if (jobShortName == "ods-authorization-management-tool") {
+        appName = "ODS"
+    }
+    else if (jobShortName == "cashless-premium-collection-management-system") {
+        appName = "FPP"
+    }
+
+    else {
+        continue
+    }
+}
+else if (parts[1] == "bancassurance-portal-000") {
+    appName = "Banca Portal"
+}
+else if (parts[1] == "new-business-underwriting-workflow") {
+    appName = "NBWF(cloud)"
+}
+else if (parts[1] == "axa-hp") {
+    appName = "AXA HP SPW"
+}
+
+else if (parts[1] == "people-soft-resources-management") {
+    appName = "PeopleSoft"
+}
+else if (parts[1] == "claims-pdwf") {
+    appName = "pdwf"
+}
+else if (parts[1] == "operational-efficiency-workflow") {
+    appName = "OE Workflow"
+}
+
+else if (parts[1] == "my-number-management") {
+    appName = "MyNumber"
+}
+else if (parts[1] == "integrated-annuity-payment") {
+    appName = "IAP"
+}
+else if (parts[1] == "eopt") {
+    appName = "Expense Tool & FTHF"
+}
+else if (parts[1] == "icm-claims-payment-workflow") {
+    appName = "claims- ICM"
+}
+ if ( !applicationResults.containsKey(appName)) {
+         applicationResults[appName] =[
+            status : "OK",
+            jobs : [],
+            duration : 0
             ]
-        }
+    }
 
-        def childStatus = "OK"
-        try {
-            def build = item.getLastCompletedBuild()
-            if (
-                build == null ||
-                build.getResult() == null ||
-                build.getResult().toString() != "SUCCESS"
+def childStatus = "OK"
+def  duration = 0
+try {
+        def build = item.getLastCompletedBuild()
+        duration = build ? build.getDuration() / 1000 : 0
+         if (
+             build == null ||
+            build.getResult() == null ||
+            build.getResult().toString() != "SUCCESS"
             ) {
 
                 childStatus = "NG"
@@ -469,9 +579,9 @@ if (!monitorJob) {
         applicationResults[appName]["jobs"].add(
             "${childStatus} : ${fullName}"
         )
+        applicationResults[appName]["duration"] = applicationResults[appName]["duration"] + duration
     }
 }
-
 
 def checkGitavailability() {
     def response = httpRequest(
