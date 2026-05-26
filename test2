@@ -291,6 +291,7 @@ def getApplicationHealthRows() {
             job_details: applicationResults[appName]["jobs"].join("\n "),
             jobs: applicationResults[appName]["jobs"],
             job_duration: applicationResults[appName]["duration"],
+            failure_reason: applicationResults[appName]["failure_reason"],
             checked:
             new Date().format(
                 "yyyy-MM-dd HH:mm:ss"
@@ -546,7 +547,7 @@ try {
 
         childStatus = "NG"
         applicationResults[appName]["status"] = "NG"
-        def childJob = Jenkins.instance.getItemBYFullName(fullName)
+        def childJob = Jenkins.instance.getItemByFullName(fullName)
         def childBuild = childJob?.getLastCompletedBuild()
         def logs = childBuild?.getLog(300)?.join("\n")
         echo "Debug before child job"
@@ -570,14 +571,19 @@ try {
             }
 
             if (candidates.size() > 0) {
-                candidates.sort { it.length() }
-                failureReason = candidates[0].take(200)
-
+                candidates.sort { -it.length() }
+                def rawError = candidates[0]
+                def matcher = (rawError =~ /(ERR_[A-Z_]+)/)
+                if (matcher.find()) {
+                    failureReason = matcher.group(1)
+                } else {
+                    failureReason = "APPLICATION_FAILURE"
+                }
             }
             else {
                 failureReason = "Application Failure"
             }
-            applicationResults[appName]["failure_reason"] = "${fullName} : ${failureReason}"
+            applicationResults[appName]["failure_reason"] = " ${failureReason}"
         }
     }
 
