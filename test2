@@ -188,22 +188,39 @@ Write-Log "Log captured at: $logFile"
 
 # 14. Dynatrace placeholder
 
-$credential = Get-StoredCredential -Target "DynatraceLogIngest"
-$token = $credential.Password
-$tenantUrl = "https://lpi52873.apps.dynatrace.com/"
-$headers = @{
-    Authorization = "Api-Token $token"
-    "Content-Type" = "text/plain; charset=utf-8"
+try {
+    $credential = Get-StoredCredential -Target "DynatraceLogIngest"
+    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credential.Password)
+    $token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+    $tenantUrl = "https://lpi52873.apps.dynatrace.com"
+    $headers = @{
+        Authorization = "Api-Token $token"
+        "Content-Type" = "application/json"
+    }
+    $logContent = Get-Content $logFile -Raw
+    $status = "SUCCESS"
+    if ($logContent -match "FAILED") {
+        $status = "FAILED"
+    }
+    $payload = @{
+        content = $logContent
+        source = "vpn-healthcheck"
+        vpn_name = $VpnName
+        status = $status
+        host = $env:COMPUTERNAME
+        environment = "POC"
+    } | ConvertTo-Json
+    Invoke-RestMethod `
+        -Uri "$tenantUrl/api/v2/logs/ingest" `
+        -Method Post `
+        -Headers $headers `
+        -Body $payload
+    Write-Log "Log successfully pushed to Dynatrace"
 }
+catch {
+    Write-Log "Dynatrace upload failed: $($_.Exception.Message)"
 
-$logContent = Get-Content $logFile -Raw
-Invoke-RestMethod `
-    -Uri "$tenantUrl/api/v2/logs/ingest" `
-    -Method Post `
-    -Headers $headers `
-    -Body $logContent
-Write-Log "Log successfully pushed to Dynatrace."
-
+}
 
 # 15. Alert placeholder
 Write-Log "Alert integration will be added in next phase."
