@@ -1,55 +1,27 @@
-
-# VPN HEALTH CHECK AUTOMATION
-
 $VpnName = "AXA_JP VPN"
-
 $VpnHost = "AXA-JP.WEVPN.AXA.COM"
-
 $InternetTestHost = "google.com"
-
 $InternalTestHost = "confluence.axa.com"
-
 $WaitSeconds = 60
-
 $LogDir = "C:\jenkins\vpn-monitor\logs"
 
-
-
-# ================================
 # CREATE LOG DIRECTORY
-# ================================
-
 if (!(Test-Path $LogDir)) {
-
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
 
-
-
-# ================================
 # LOG FILE
-# ================================
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-
 $logFile = Join-Path $LogDir "vpn-healthcheck-$timestamp.log"
 
-
-
-# ================================
 # LOGGING FUNCTION
-# ================================
 
 function Write-Log {
-
     param([string]$Message)
-
     $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
     $formattedLine = "{0,-22} | {1}" -f $time, $Message
-
     Write-Host $formattedLine
-
     [System.IO.File]::AppendAllText(
         $logFile,
         "$formattedLine`r`n",
@@ -57,290 +29,237 @@ function Write-Log {
     )
 }
 
-
-
-# ================================
 # FAILURE HANDLER
-# ================================
-
 function Fail-Step {
-
     param([string]$Message)
-
     Write-Log "FAILED: $Message"
-
     exit 1
 }
 
-
-
-# ================================
 # STEP WRAPPER
-# ================================
+
 
 function Test-Step {
-
     param(
         [string]$Name,
         [scriptblock]$Command
     )
 
     Write-Log "START: $Name"
-
     try {
-
         & $Command
-
         Write-Log "PASS: $Name"
     }
     catch {
-
         Fail-Step "$Name failed. Error: $($_.Exception.Message)"
     }
 }
 
-
-
-# ================================
 # VPN STATUS
-# ================================
 
 function Get-VpnStatus {
-
     $vpn = Get-VpnConnection -Name $VpnName -ErrorAction Stop
-
     return $vpn.ConnectionStatus
 }
 
-
-
-# ================================
 # VPN CONNECT
-# ================================
+
 
 function Connect-Vpn {
 
     Write-Log "Connecting VPN: $VpnName"
-
     rasdial "$VpnName"
-
-    Start-Sleep -Seconds 5
-
+    Start-Sleep -Seconds 20
     $status = Get-VpnStatus
-
     if ($status -ne "Connected") {
-
         Fail-Step "VPN connection failed. Current status: $status"
+        $Global:VpnHealthStatus = 0
+        return
     }
-
     Write-Log "VPN connected successfully."
 }
 
-
-
-# ================================
 # VPN DISCONNECT
-# ================================
 
 function Disconnect-Vpn {
 
     Write-Log "Disconnecting VPN: $VpnName"
-
     rasdial "$VpnName" /disconnect
-
     Start-Sleep -Seconds 5
-
     $status = Get-VpnStatus
 
     if ($status -ne "Disconnected") {
-
         Fail-Step "VPN disconnect failed. Current status: $status"
     }
-
     Write-Log "VPN disconnected successfully."
 }
 
-
-
-# ================================
 # START
-# ================================
-
 
 
 Write-Log "VPN HEALTH CHECK STARTED"
-
-
 Write-Log "VPN Name : $VpnName"
-
 Write-Log "VPN Host : $VpnHost"
-
 Write-Log "Internet Test Host : $InternetTestHost"
-
 Write-Log "Internal Test Host : $InternalTestHost"
-
 Write-Log "Wait Seconds : $WaitSeconds"
 
-
-
-# ================================
 # 1. INTERNET CONNECTIVITY
-# ================================
+
 
 Test-Step "Internet connectivity check to $InternetTestHost" {
-
     $result = Test-NetConnection $InternetTestHost -Port 443
-
     if ($result.TcpTestSucceeded -ne $true) {
-
         throw "Internet connectivity failed"
     }
 }
 
-
-
-# ================================
 # 2. DNS RESOLUTION
-# ================================
+
 
 Test-Step "DNS resolution check for VPN hostname" {
-
     Resolve-DnsName $VpnHost -ErrorAction Stop | Out-Null
 }
 
 
-
-# ================================
 # 3. VPN CONNECT
-# ================================
 
 Test-Step "VPN connect" {
-
     Connect-Vpn
 }
 
-
-
-# ================================
 # 4. AUTHENTICATION VALIDATION
-# ================================
 
 Test-Step "Authentication validation" {
-
     $status = Get-VpnStatus
-
     if ($status -ne "Connected") {
-
         throw "VPN authentication/session failed"
     }
 }
 
-
-
-# ================================
 # 5. VPN SESSION STATUS
-# ================================
+
 
 Test-Step "VPN session status check" {
-
     $status = Get-VpnStatus
-
     Write-Log "VPN session status: $status"
 }
 
-
-
-# ================================
 # 6. SESSION WAIT
-# ================================
 
 Write-Log "Waiting for $WaitSeconds seconds to simulate real user session..."
-
 Start-Sleep -Seconds $WaitSeconds
 
-
-
-# ================================
 # 7. SESSION PERSISTENCE
-# ================================
 
 Test-Step "Session persistence validation" {
-
     $status = Get-VpnStatus
-
     if ($status -ne "Connected") {
-
         throw "VPN session dropped during wait period"
     }
 }
 
-
-
-# ================================
 # 8. INTERNAL ACCESS VALIDATION
-# ================================
 
 Test-Step "Internal access validation to $InternalTestHost" {
-
     $result = Test-NetConnection $InternalTestHost -Port 443
-
     if ($result.TcpTestSucceeded -ne $true) {
-
         throw "Internal access validation failed"
     }
 }
 
-
-
-# ================================
 # 9. VPN DISCONNECT
-# ================================
 
 Test-Step "VPN disconnect" {
-
     Disconnect-Vpn
 }
 
-
-
-# ================================
 # 10. VPN RECONNECT
-# ================================
+
 
 Test-Step "VPN reconnect" {
-
     Connect-Vpn
 }
 
-
-
-# ================================
 # 11. RECONNECT VALIDATION
-# ================================
 
 Test-Step "Reconnect validation" {
-
     $status = Get-VpnStatus
-
     if ($status -ne "Connected") {
-
         throw "Reconnect validation failed"
     }
 }
 
+# DYNATRACE LOG UPLOAD
+a
+try {
+
+    Import-Module CredentialManager -ErrorAction SilentlyContinue
+    $credential = Get-StoredCredential -Target "DynatraceLogIngest"
+    if ($null -eq $credential) {
+        Write-Log "Dynatrace credential not found in Windows Credential Manager."
+    }
+    else {
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credential.Password)
+        $token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        $ten#antUrl = "https://lpi52873.apps.dynatrace.com"
+        $logContent = Get-Content $logFile -Raw
+        $result = "SUCCESS"
+        $logLevel = "INFO"
+
+        Write-Log "Uploading to Dynatrace"
+        Write-Log "Payload status: $status"
+
+        if ($logContent -match "FAILED") {
+            $result = "ERROR"
+            $logLevel = "SEVERE"
+            
+        }
+
+        $payload = @(
+            @{
+                content = $logContent
+                source = "vpn-healthcheck"
+                vpn_name = $VpnName
+                vpn_host = $VpnHost
+                result = $result
+                loglevel = $logLevel
+                host = $env:COMPUTERNAME
+                environment = "POC"
+            }
+        ) | ConvertTo-Json -Depth 5
+
+        $headers = @{
+            Authorization = "Api-Token $token"
+            "Content-Type" = "application/json"
+        }
+
+        Write-Log "URL: https://lpi52873.live.dynatrace.com/api/v2/logs/ingest"
+        Write-Log "token length:$($token.Length)"
+        write-Host $payload
 
 
-# ================================
+        Invoke-RestMethod `
+            -Uri "https://lpi52873.live.dynatrace.com/api/v2/logs/ingest" `
+            -Method Post `
+            -Headers $headers `
+            -Body $payload
+
+        Write-Log "Dynatrace log upload successful."
+    }
+
+}
+catch {
+    Write-Log "Dynatrace upload failed"
+    Write-Log $_.Exception.Message
+    if($_.Exception.Message){
+        Write-Log $_.ErrorDetails.Message
+    }
+}
+
 # FINAL LOGGING
-# ================================
-
 Write-Log "Log captured at: $logFile"
-
-Write-Log "Dynatrace metric push will be added in next phase."
-
-Write-Log "PagerDuty alert integration will be added in next phase."
-
+Write-Log "Dynatrace Log Completed."
 Write-Log "VPN HEALTH CHECK COMPLETED SUCCESSFULLY"
-
 
 exit 0
