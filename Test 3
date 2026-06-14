@@ -1,5 +1,3 @@
-Use this full fixed code. It will send SUCCESS or ERROR logs to Dynatrace even if any section fails.
-
 $VpnName = "AXA_JP VPN"
 $VpnHost = "AXA-JP.WEVPN.AXA.COM"
 $InternetTestHost = "google.com"
@@ -7,8 +5,10 @@ $InternalTestHost = "confluence.axa.com"
 $WaitSeconds = 60
 $LogDir = "C:\jenkins\vpn-monitor\logs"
 
+#Declarations
+
 $Global:ScriptFailed = $false
-$Global:FailedStep = ""
+$Global:FailedStep = "N/A"
 
 if (!(Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
@@ -19,12 +19,9 @@ $logFile = Join-Path $LogDir "vpn-healthcheck-$timestamp.log"
 
 function Write-Log {
     param([string]$Message)
-
     $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $formattedLine = "{0,-22} | {1}" -f $time, $Message
-
     Write-Host $formattedLine
-
     [System.IO.File]::AppendAllText(
         $logFile,
         "$formattedLine`r`n",
@@ -32,12 +29,36 @@ function Write-Log {
     )
 }
 
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Command,
+        [string]$StepName,
+        [int]$MaxAttempts = 2,
+        [int]$DelaySeconds = 30
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Command
+            return
+        }
+        catch {
+            Write-Log "$StepName failed on attempt $attempt"
+            if ($attempt -lt $MaxAttempts) {
+                Write-Log "Retrying $StepName after $DelaySeconds seconds..."
+                Start-Sleep -Seconds $DelaySeconds
+            }
+            else {
+                throw
+            }
+        }
+    }
+}
+
+
 function Send-DynatraceLog {
     try {
         Import-Module CredentialManager -ErrorAction SilentlyContinue
-
         $credential = Get-StoredCredential -Target "DynatraceLogIngest"
-
         if ($null -eq $credential) {
             Write-Log "Dynatrace credential not found in Windows Credential Manager."
             return
@@ -45,9 +66,7 @@ function Send-DynatraceLog {
 
         $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credential.Password)
         $token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-
         $logContent = Get-Content $logFile -Raw
-
         $result = "SUCCESS"
         $logLevel = "INFO"
 
@@ -59,7 +78,6 @@ function Send-DynatraceLog {
         Write-Log "Uploading to Dynatrace"
         Write-Log "Payload result: $result"
         Write-Log "Failed step: $Global:FailedStep"
-
         $payload = @(
             @{
                 content     = $logContent
@@ -67,7 +85,7 @@ function Send-DynatraceLog {
                 vpn_name    = $VpnName
                 vpn_host    = $VpnHost
                 result      = $result
-                failed_step = $Global:FailedStep
+                Error_details = $Global:FailedStep
                 loglevel    = $logLevel
                 host        = $env:COMPUTERNAME
                 environment = "POC"
@@ -105,9 +123,7 @@ function Fail-Step {
 
     $Global:ScriptFailed = $true
     $Global:FailedStep = $StepName
-
     Write-Log "FAILED: $StepName - $Message"
-
     throw "$StepName failed. $Message"
 }
 
@@ -135,11 +151,8 @@ function Get-VpnStatus {
 
 function Connect-Vpn {
     Write-Log "Connecting VPN: $VpnName"
-
     rasdial "$VpnName"
-
     Start-Sleep -Seconds 20
-
     $status = Get-VpnStatus
 
     if ($status -ne "Connected") {
@@ -151,13 +164,9 @@ function Connect-Vpn {
 
 function Disconnect-Vpn {
     Write-Log "Disconnecting VPN: $VpnName"
-
     rasdial "$VpnName" /disconnect
-
     Start-Sleep -Seconds 5
-
     $status = Get-VpnStatus
-
     if ($status -ne "Disconnected") {
         throw "VPN disconnect failed. Current status: $status"
     }
@@ -175,7 +184,6 @@ Write-Log "Wait Seconds : $WaitSeconds"
 try {
     Test-Step "Internet connectivity check to $InternetTestHost" {
         $result = Test-NetConnection $InternetTestHost -Port 443
-
         if ($result.TcpTestSucceeded -ne $true) {
             throw "Internet connectivity failed"
         }
@@ -186,12 +194,14 @@ try {
     }
 
     Test-Step "VPN connect" {
+        Invoke-WithRetry -StepName "VPN Connect" -Command {
         Connect-Vpn
+        }
     }
+
 
     Test-Step "Authentication validation" {
         $status = Get-VpnStatus
-
         if ($status -ne "Connected") {
             throw "VPN authentication/session failed"
         }
@@ -204,7 +214,6 @@ try {
 
     Write-Log "Waiting for $WaitSeconds seconds to simulate real user session..."
     Start-Sleep -Seconds $WaitSeconds
-
     Test-Step "Session persistence validation" {
         $status = Get-VpnStatus
 
@@ -215,7 +224,6 @@ try {
 
     Test-Step "Internal access validation to $InternalTestHost" {
         $result = Test-NetConnection $InternalTestHost -Port 443
-
         if ($result.TcpTestSucceeded -ne $true) {
             throw "Internal access validation failed"
         }
@@ -226,16 +234,22 @@ try {
     }
 
     Test-Step "VPN reconnect" {
+        Invoke-WithRetry -StepName "VPN Reconnect" -Command {
         Connect-Vpn
+         }
     }
+
 
     Test-Step "Reconnect validation" {
-        $status = Get-VpnStatus
-
-        if ($status -ne "Connected") {
-            throw "Reconnect validation failed"
+        Invoke-WithRetry -StepName "Reconnect Validation" -Command {
+            $status = Get-VpnStatus
+            if ($status -ne "Connected") {
+                throw "Reconnect validation failed. Status: $status"
+            }
+            Write-Log "VPN reconnect validation successful."
         }
     }
+
 }
 catch {
     Write-Log "SCRIPT FAILED"
@@ -255,5 +269,3 @@ finally {
         exit 0
     }
 }
-
-This is the key fix: Dynatrace upload is inside finally, so it runs for both success and failure.
