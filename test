@@ -1,593 +1,211 @@
-import jenkins.model.*
-import hudson.model.*
-import hudson.model.Job
-import com.cloudbees.hudson.plugins.folder.Folder
-import com.cloudbees.groovy.cps.NonCPS
 import groovy.json.JsonOutput
 
-def realtimeSummary = []
-
 pipeline {
-
     agent {
-        label "built-in"
+            label "built-in"
     }
-
     options {
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '30'))
-        timeout(time: 30,unit: 'MINUTES' )
+        timeout(time: 30, unit: 'MINUTES') // Timeout for the entire pipeline
+        sendSplunkConsoleLog()
         disableConcurrentBuilds()
     }
-
     stages {
-
-        stage("checkout") {
+        stage('checkout') {
             options {
-                timeout( time: 5,unit: 'MINUTES')
-            }
-
+                timeout(time: 5, unit: 'MINUTES') // Timeout for this specific stage
+                }
             steps {
-
                 script {
-                    if (checkGitavailability() == '20application0') {
+                    if (checkGitavailability() == '200') {
                         checkout([
                             $class: 'GitSCM',
-                            branches: [[
-                                name: '*/main'
-                            ]],
-                            userRemoteConfigs: [[
-                                url: 'https://github.axa.com/aljdevops/monitoring-jenkins.git',
-                                credentialsId: 'ALJ_OPS_GITHUB_MACHINE_USER'
-                            ]]
+                            branches: [[name: '*/main']],
+                            userRemoteConfigs: [
+                                [url: 'https://github.axa.com/aljdevops/monitoring-jenkins.git',
+                                 credentialsId: 'ALJ_OPS_GITHUB_MACHINE_USER']
+                            ]
                         ])
                     }
                 }
             }
         }
-
-        stage('Realtime Monitoring') {
-
+        stage('Build') {
             options {
-                timeout(time: 20,unit: 'MINUTES')
-            }
-
+                timeout(time: 20, unit: 'MINUTES') // Timeout for this specific stage
+                }
             steps {
-
                 script {
-
-                    def dynatraceUrl = "https://lpi52873.live.dynatrace.com/api/v2/events/ingest"
-                    withCredentials([
-                        string( credentialsId: 'DT_TOKEN', variable: 'DT_TOKEN')
-                    ]) {
-                        withEnv([
-                            "DYNATRACE_URL=${dynatraceUrl}"
-                        ]) {
-                            echo "STARTING REALTIME MONITORING"
-                            def realtimeRows = getRealtimeRows()
-                            echo "TOTAL REALTIME JOBS : ${realtimeRows.size()}"
-                            for (
-                                int i = 0;i < realtimeRows.size(); i++
-                            ) {
-
-                                try {
-
-                                    def row = realtimeRows[i]
-                                    realtimeSummary.add("${row.job_name} : ${row.job_status}")
-                                    echo "APPLICATION : ${row.application}"
-                                    echo "JOB : ${row.job_name}"
-                                    echo "RESULT : ${row.job_status}"
-                                    def overallStatus = row.job_status == "SUCCESS" ? "OK" : "NG"
-                                    def payload = [
-
-                                        eventType: "CUSTOM_INFO",
-                                        title: "REALTIME APPLICATION STATUS",
-                                        properties: [
-                                            application: row.application,
-                                            overall_status: overallStatus,
-                                            job_name: row.job_name,
-                                            job_status: row.job_status,
-                                            job_duration : row.job_duration.toString(),
-                                            checked: row.checked,
-                                            type: "REALTIME"
-                                        ]
-                                    ]
-
-                                    writeFile(
-                                        file: "realtime_payload.json",
-                                        text: JsonOutput.toJson(payload)
-                                    )
-
-                                    sh '''
-                                        curl --fail -X POST "$DYNATRACE_URL" \
-                                        -H "Authorization: Api-Token $DT_TOKEN" \
-                                        -H "Content-Type: application/json" \
-                                        --data @realtime_payload.json
-                                        '''
-
-                                } catch (Exception ex) {
-                                    echo "REALTIME PUSH ERROR : ${ex}"
-                                }
-                            }
-
-                                                   
-                            echo "STARTING APPLICATION HEALTH MONITORING"
-                            def applicationRows =  getApplicationHealthRows()
-                            echo "TOTAL APPLICATIONS : ${applicationRows.size()}"
-                            for (
-                                int i = 0; i < applicationRows.size();  i++) {
-                                try {
-
-                                    def row = applicationRows[i]
-                                    echo "APPLICATION : ${row.application}"
-                                    echo "OVERALL STATUS : ${row.overall_status}"
-                                    def payload = [
-                                        eventType: "CUSTOM_INFO",
-                                        title: "APPLICATION HEALTH STATUS",
-
-                                        properties: [
-                                            application: row.application,
-                                            overall_status: row.overall_status,
-                                            job_details: row.job_details,
-                                            jobs:row.jobs.join(" | "),
-                                            job_duration : row.job_duration.toString(),
-                                            checked:  row.checked,
-                                            type: "APPLICATION"
-                                        ]
-                                    ]
-
-                                    writeFile(
-                                        file: "application_payload.json",
-                                        text:JsonOutput.toJson(payload)
-                                    )
-
-                                    sh '''
-                                        curl --fail -X POST "$DYNATRACE_URL" \
-                                        -H "Authorization: Api-Token $DT_TOKEN" \
-                                        -H "Content-Type: application/json" \
-                                        --data @application_payload.json
-                                        '''
-                                } catch (Exception ex) {
-                                    echo "APPLICATION PUSH ERROR : ${ex}"
-                                }
-                            }
-
-                            echo "REALTIME JOB SUMMARY"
-                           
-                            for (
-                                int r = 0;
-                                r < realtimeSummary.size();
-                                r++
-                            ) {
-                                echo realtimeSummary[r]
-                            }
-
-                            echo "APPLICATION HEALTH SUMMARY"           
-                            for (
-                                int a = 0;
-                                a < applicationRows.size();
-                                a++
-                            ) {
-
-                                def appRow = applicationRows[a]
-                                echo "${appRow.application} : ${appRow.overall_status}"
-                                echo "APP Duaration : ${appRow.job_duration}"
-                                if (appRow.jobs != null) {
-                                    for (
-                                        int j = 0; j < appRow.jobs.size(); j++
-                                    ) {
-                                        echo "CHILD JOB : ${appRow.jobs[j]}"
+                    LinkedHashMap resultMap = [:]
+                    yamlData = readYaml file:"${WORKSPACE}/${JOB_NAME}.yml"
+                    report = yamlData.report
+                    parastage = yamlData.jobgroups.collectEntries{
+                        ["Excute Application Check : ${it.name}":
+                            script{
+                                return {
+                                    //Store result per nodes
+                                    LinkedHashMap jobRetMap = [:]
+                                    int retryCnt = 0
+                                    while (retryCnt <= 1) {
+                                        def ret = build job : it.projectName,
+                                            wait : true,
+                                            propagate : false
+                                        echo "${it.name} - ${NODE_NAME} - ${ret.getResult()}"
+                                        jobRetMap.put("${NODE_NAME}", ret)
+                                        //Escape rooping when job is success
+                                        if (ret.getResult() == "SUCCESS") {
+                                            break
+                                        }
+                                        //Terminate after 2 retry
+                                        if (retryCnt >= 1 ) {
+                                            break
+                                        }
+                                        retryCnt = retryCnt + 1
                                     }
+                                    resultMap.put(it.name,jobRetMap)
                                 }
                             }
+                        ]
+                    }
+                    parallel parastage
 
-                            echo "DYNATRACE UPDATE COMPLETED"
+                    stage ("Send Email"){
+                        boolean overallResult = true
+                        String mailbody = '<br>'
+                        resultMap.each {
+                            boolean jobRresult = false
+                            String jobstr = ""
+                            it.value.each {
+                                if (it.value.getResult() == "SUCCESS") {
+                                    jobRresult = true
+                                }
+                                Date d = new Date(it.value.getStartTimeInMillis())
+                                jobstr = jobstr + " - ${it.value.getResult()}, Node:${it.key}, (${it.value.getFullProjectName()}#${it.value.getId()}, ${d}, ${it.value.getDurationString()}) <BR>\n"
+                            }
+                            if (jobRresult) {
+                                mailbody = mailbody + "<strong><font color='blue'>OK</font> ${it.key} </strong><BR>\n"
+                            } else {
+                                currentBuild.result = 'UNSTABLE'
+                                overallResult = false
+                                mailbody = mailbody + "<strong><font color='red'>NG</font> ${it.key} </strong><BR>\n"
+                            }
+                            mailbody = mailbody + jobstr
+                        }
+                        echo mailbody
+                        if (overallResult) {
+                            if (!report.unstableOnly || currentBuild.getPreviousBuild().result == "UNSTABLE") {
+                                echo 'Send success mail'
+                                mail subject : "[OK] ${report.subject}", 
+                                body : mailbody + "<BR>Build URL: ${env.BUILD_URL}console",
+                                mimeType : "text/html",
+                                to : report.mailTo, from: '',
+                                replyTo: ''
+                            }
+                        } else {
+                            if (currentBuild.getPreviousBuild().result == "UNSTABLE") {
+                                echo "Continuously unstable hence Jenkins doesn't send mail again"
+                            } else {
+                            echo 'Send unstable mail'
+                            mail subject : "[NG] ${report.subject}",
+                            body : mailbody + "<BR>Build URL: ${env.BUILD_URL}console",
+                            mimeType : "text/html",
+                            to : report.mailTo, from: '',
+                            replyTo: ''
+                            }
                         }
                     }
                 }
             }
         }
     }
-
     post {
-
-        always {
+        unstable {
             script {
-                echo "PIPELINE FINISHED"
-                try {
-                    cleanWs()
-                    echo "WORKSPACE CLEANUP COMPLETED"
-                } catch (error) {
-                    echo "CLEANUP FAILED : ${error}"
+                prev_result = currentBuild.getPreviousBuild().result
+                if (prev_result == "UNSTABLE") {
+                    echo "Continuously failed hence Jenkins doesn't trigger PagerDuty"
+                } else {
+                    if (params.pd_integration_key!='' && params.pd_integration_key?.trim() && params.pd_integration_key!=null) {
+                        withCredentials([string(credentialsId: params.pd_integration_key, variable: 'pd_integration_key')]){
+                            sendPagerDuty()
+                        }
+                    }
+                    if ("${JOB_NAME}".contains("group-jobs/realtime")) {
+                        build job: 'Send Notification to Datalake', parameters: [
+                        string(name: 'NotificationMessages', value: '現在チェックNGの原因を調査中です。ITチームからの続報をお待ちください。/ IT teams are currently investigating the cause of the NG state for these applications. Please wait for further updates from IT.'),
+                        string(name: 'JobName', value: "${JOB_BASE_NAME}")  
+                        ]
+                    }
                 }
             }
         }
-    }
-}
-@NonCPS
-def getRealtimeRows() {
-
-    def rows = []
-    def realtimeFolder = Jenkins.instance.getItemByFullName(  "group-jobs/realtime" )
-    if (realtimeFolder == null) {
-        return rows
-    }
-    def realtimeFolders = new ArrayList( realtimeFolder.getItems() )
-    for (
-        int i = 0;  i < realtimeFolders.size(); i++
-    ) {
-        def appFolder = realtimeFolders[i]
-        if (!(appFolder instanceof Folder)) {
-            continue
-        }
-        def appName = appFolder.getName().toString()
-        if (
-            appName ==  "001-seed-applications"
-        ) {
-            continue
-        }
-        def jobs = new ArrayList( appFolder.getItems())
-        for (
-            int j = 0;j < jobs.size();j++) {
-            def job =  jobs[j]
-            if (!(job instanceof Job)) {
-                continue
+        always {
+            dir("${env.WORKSPACE}@tmp") {
+                cleanWs()
             }
-            def finalResult = "SUCCESS"
-            def duration = 0
-
-            try {
-                def build = job.getLastCompletedBuild()
-                duration = build ? build.getDuration() / 1000 : 0
-                if (
-                    build == null ||
-                    build.getResult() == null ||
-                    build.getResult().toString() != "SUCCESS"
-                ) {
-                    finalResult = "UNSTABLE"
+            script {
+                def currentTimestamp = java.time.LocalDateTime.now()
+                def data = [
+                    "event_tag":"build_report",
+                    "metadata":[""],
+                    "job_name": "${JOB_NAME}",
+                    "testsuite":[""],
+                    "build_number":"${BUILD_NUMBER}",
+                    "page_num":1,
+                    "job_result": currentBuild.result,
+                    "user":"(timer)",
+                    "build_url":"${BUILD_URL}",
+                    "endTime": "${currentTimestamp}"
+                ]
+                def jsonString = JsonOutput.toJson(data)
+                echo "Generated JSON: ${jsonString}"
+                writeFile file: "jenkins_result.json", text: jsonString
+                
+                def now = new Date()
+                def time = now.format("HH-mm-ss")
+                def day = now.format("dd")    // e.g. "08" for the 8th
+                def month = now.format("MM")  // e.g. "10" for October
+                def year = now.format("YYYY")
+                
+                if ("${JOB_NAME}".contains("group-jobs/realtime")) {
+                    sh """
+                    aws s3 cp jenkins_result.json s3://axa-li-jp-jenkins-results-prod/jenkins/${JOB_BASE_NAME}/${year}/${month}/${day}/${time}_jenkins_result.json
+                    """
                 }
-            } catch (Exception ex) {
-                finalResult = "UNSTABLE"
-            }
 
-            rows.add([
-                application:  appName,
-                job_name:  job.getFullName().toString(),
-                job_status: finalResult,
-                job_duration: duration,
-                checked: new Date().format( "yyyy-MM-dd HH:mm:ss").toString()
-            ])
-        }
-    }
-
-    return rows
-}
-
-@NonCPS
-def getApplicationHealthRows() {
-
-    def rows = []
-    def applicationFolder =Jenkins.instance.getItemByFullName("applications")
-    if (applicationFolder == null) {
-        return rows
-    }
-    def applicationResults = [:] 
-    scanApplicationFolder( 
-        applicationFolder,
-        applicationResults)
-    def appNames = new ArrayList( applicationResults.keySet())
-    for (
-        int i = 0; i < appNames.size();  i++) {
-        def appName = appNames[i].toString()
-        echo "ROW Duration: ${applicationResults[appName]["duration"]}"
-       rows.add([
-            application: appName,
-            overall_status: applicationResults[appName]["status"],
-            job_details: applicationResults[appName]["jobs"].join("\n "),
-            jobs: applicationResults[appName]["jobs"],
-            job_duration: applicationResults[appName]["duration"],
-            checked:
-            new Date().format(
-                "yyyy-MM-dd HH:mm:ss"
-            ).toString()
-        ])
-
-    }
-
-    return rows
-}
-
-@NonCPS
-def scanApplicationFolder(
-    def folder,
-    def applicationResults
-) 
-{
-    def items = new ArrayList( folder.getItems())
-    for (
-        int i = 0;  i < items.size();  i++)
-        {
-            def item = items[i]
-        if ( item.getName().toString() == "001-seed-applications") {
-            continue
-        }
-        if (item instanceof Folder) {
-            scanApplicationFolder( item,applicationResults )
-            continue
-        }
-        if (!(item instanceof Job)) {
-            continue
-        }
-        def fullName = item.getFullName().toString()
-        def excludePatterns = [
-            "/preprod/",
-            "/dev/",
-            "/sit/",
-            "/uat/",
-            "/test/"
-        ]
-        boolean excluded = false
-        for (int e = 0; e < excludePatterns.size(); e++) {
-            if (
-                fullName.contains( excludePatterns[e])
-            ) {
-                excluded = true
-                break
             }
         }
-        if (excluded) {
-            continue
-        }
-        def blockedJobs = [
-            "applications/emma/functional-check-next-gen",
-            "applications/emma/login-only-functional-check",
-            "applications/emma/login-only-functional-check-next-gen",
-            "applications/emma/myaxaadmin-login-check",
-            "applications/ndhats/functional-check",
-            "applications/canweb/manage-functional-check",
-            "applications/canweb/password-change",
-            "applications/canweb/simple-functional-check",
-            "applications/new-biz-data-registration-system",
-            "applications/recruitimp",
-            "applications/siteminder",
-            "applications/webedi-ts",
-            "applications/customer-master-data-management",
-            "applications/claims-reception-web",
-            "applications/cis-plus",
-            "applications/sl/weekday-functional-check-old",
-            "applications/sl-lifej/functional-check-old",
-            " applications/digital-provision/functional-check",
-            "applications/icm-claims-payment-workflow/functional-check",
-            "applications/claims-pdwf-holiday/functional-check",
-            "applications/bancassurance-portal-000/assurance-functional-check",
-            "applications/bancassurance-portal-000/functional-check",
-            "applications/axa-hp/spw-usd-functional-check",
-            "applications/axa-hp/spw-aud-functional-check"
-        ]
-        boolean blocked = false
-        for (int b = 0; b < blockedJobs.size(); b++ )
-             {
-                if (fullName.contains(blockedJobs[b]) ) {
-                    blocked = true
-                    break
-                }
-         }
-        if (blocked) {
-            continue
-        }
-        def allowedPatterns = [
-            "functional-check",
-            "api-check",
-            "login",
-            "download-file",
-            "notification",
-            "policy-details",
-            "policy-loan",
-            "check-address-master",
-            "check-bank-master",
-            "px-calculator",
-            "broker-application",
-            "commission",
-            "corporate-search",
-            "policy-search",
-            "registration-inquiry",
-            "training-history",
-            "sales-score",
-            "special-agency",
-            "icm-admin",
-            "icm-general",
-            "weekday-functional-check",
-            "owner-functional-check",
-            "owner-functional-check-report-creation",
-            "sales-functional-check",
-            "qit-functional-check",
-            "spw-functional-check",
-            "external-functional-check",
-            "internal-functional-check",
-            "webbar-functional-check",
-            "name-change-functional-check",
-            "address-change-functional-check",
-            "proxy-request-functional-check",
-            "surrender-functional-check",
-            "cloud-functional-check",
-            "nttgw-functional-check",
-            "nttgw-accessonly-functional-check",
-            "customer-list-functional-check",
-            "gmo-api-check",
-            "www2-api-check",
-            "aura-api-check",
-            "cashless-premium-collection-management-system",
-            "ods-authorization-management-tool"
-        ]
-
-        boolean monitorJob = false
-        for (
-            int p = 0; p < allowedPatterns.size(); p++
-        ) {
-
-            if (
-                fullName.contains(
-                    allowedPatterns[p]
-                )
-            ) {
-                monitorJob = true
-                break
-            }
-}
-
-if (!monitorJob) {
-    continue
-}
-def parts = fullName.tokenize("/")
-if (parts.size() < 2) {
-    continue
-}
-def appName = parts[1].toString()
-def jobShortName = parts[parts.size() - 1].toString()
-if (parts[1] == "agportal-cloud") {
-
-    if (parts.size() > 3 && parts[2] == "external" &&
-        (
-            jobShortName == "broker-application" ||
-            jobShortName == "commission" ||
-            jobShortName == "corporate-search" ||
-            jobShortName == "policy-search" ||
-            jobShortName == "registration-inquiry" ||
-            jobShortName == "training-history"
-        )
-    ) {
-        appName = "AG Portal Cloud External"
     }
-    else if (parts.size() > 3 && parts[2] == "internal" &&
-        (
-            jobShortName == "policy-search" ||
-            jobShortName == "sales-score" ||
-            jobShortName == "special-agency"
-        )
-    ) {
-        appName = "AG Portal Cloud Internal"
-    }
-    else if (jobShortName == "nttgw-functional-check") {
-        appName = "AG Portal NTTGW"
-    }
-    else if (jobShortName == "compass-functional-check") {
-        appName = "Compass PB/CO"
-    }
-    else {
-        continue
-    }
-}
-
-else if (parts[1] == "cs-portal") {
-    if (jobShortName == "surrender-functional-check"){
-        appName ="SurrenderWeb"
-    }
-    else{
-        appName ="cs-portal"
-    }
-}
-else if (parts[1] == "employee-attendance-management-time-pro-v2") {
     
-        appName ="TimePro"
-    }
-else if (parts[1] == "ndhats") {
-    if (jobShortName == "qit-functional-check"){
-        appName ="QIT WebOnline"
-    }
-    else{
-        appName ="cs-ndhats"
-    }
-}
-else if (parts[1] == "compass") {
-    if (
-        jobShortName == "aura-api-check" ||
-        jobShortName == "customer-list-functional-check" ||
-        jobShortName == "gmo-api-check" ||
-        jobShortName == "www2-api-check"
-    ) {
-        appName = "Compass CCI/FA"
-    }
-    else if (jobShortName == "ods-authorization-management-tool") {
-        appName = "ODS"
-    }
-    else if (jobShortName == "cashless-premium-collection-management-system") {
-        appName = "FPP"
-    }
-
-    else {
-        continue
-    }
-}
-else if (parts[1] == "bancassurance-portal-000") {
-    appName = "Banca Portal"
-}
-else if (parts[1] == "new-business-underwriting-workflow") {
-    appName = "NBWF(cloud)"
-}
-else if (parts[1] == "axa-hp") {
-    appName = "AXA HP SPW"
 }
 
-else if (parts[1] == "people-soft-resources-management") {
-    appName = "PeopleSoft"
-}
-else if (parts[1] == "claims-pdwf") {
-    appName = "pdwf"
-}
-else if (parts[1] == "operational-efficiency-workflow") {
-    appName = "OE Workflow"
-}
-
-else if (parts[1] == "my-number-management") {
-    appName = "MyNumber"
-}
-else if (parts[1] == "integrated-annuity-payment") {
-    appName = "IAP"
-}
-else if (parts[1] == "eopt") {
-    appName = "Expense Tool & FTHF"
-}
-else if (parts[1] == "icm-claims-payment-workflow") {
-    appName = "claims- ICM"
-}
- if ( !applicationResults.containsKey(appName)) {
-         applicationResults[appName] =[
-            status : "OK",
-            jobs : [],
-            duration : 0
-            ]
-    }
-
-def childStatus = "OK"
-def  duration = 0
-try {
-        def build = item.getLastCompletedBuild()
-        duration = build ? build.getDuration() / 1000 : 0
-         if (
-             build == null ||
-            build.getResult() == null ||
-            build.getResult().toString() != "SUCCESS"
-            ) {
-
-                childStatus = "NG"
-                applicationResults[appName]["status"] = "NG"
-            }
-        } catch (Exception ex) {
-            childStatus = "NG"
-            applicationResults[appName]["status"] = "NG"
-        }
-        applicationResults[appName]["jobs"].add(
-            "${childStatus} : ${fullName}"
-        )
-        applicationResults[appName]["duration"] = applicationResults[appName]["duration"] + duration
-    }
+def sendPagerDuty() {
+    def response = httpRequest acceptType: 'APPLICATION_JSON', contentType: 'APPLICATION_JSON',
+        httpMode: 'POST', quiet: false,
+        url: 'https://events.pagerduty.com/v2/enqueue',
+        httpProxy:'http://10.144.64.140:9090',
+        ignoreSslErrors: true,
+        requestBody: """{
+            "payload": {
+                "summary":"Application Check Failed for ${JOB_NAME}",
+                "severity":"critical",
+                "source":"Jenkins MC Check",
+                "custom_details":{
+                    "Jenkins URL": "${BUILD_URL}"
+                    }
+                },
+            "routing_key": "${pd_integration_key}",
+            "event_action":"trigger"
+        }"""
+    echo "Response: ${response.content}"
 }
 
 def checkGitavailability() {
     def response = httpRequest(
-        url:  'https://github.axa.com/aljdevops/monitoring-jenkins.git',
-        validResponseCodes: '100:599',
-        quiet:  true
-    )
-    return "${response.status}"
+        url: 'https://github.axa.com/aljdevops/monitoring-jenkins.git',
+        quiet: true,
+        validResponseCodes : "100:599")
+        echo "${response.status}"
+        return "${response.status}"
 }
