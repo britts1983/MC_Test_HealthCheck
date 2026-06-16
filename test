@@ -92,6 +92,29 @@ pipeline {
                             }
                             mailbody = mailbody + jobstr
                         }
+
+                        def dtApplications = []
+                        resultMap.each { app ->
+                            boolean appStatus = true
+                            String jobs = ""
+                            app.value.each { node ->
+                                def childStatus = node.value.getResult()
+                                if (childStatus != "SUCCESS") {
+                                    appStatus = false
+                                }
+                                jobs += "${childStatus == 'SUCCESS' ? 'OK' : 'NG'} : ${node.value.getFullProjectName()} | "
+                            }
+                            dtApplications.add([
+                                application: app.key,
+                                application_status: appStatus ? "OK" : "NG",
+                                jobs: jobs
+                            ])
+                        }
+                        writeFile(
+                            file: "dynatrace_applications.json",
+                            text: JsonOutput.toJson(dtApplications)
+                        )
+
                         echo mailbody
                         if (overallResult) {
                             if (!report.unstableOnly || currentBuild.getPreviousBuild().result == "UNSTABLE") {
@@ -145,6 +168,29 @@ pipeline {
                 cleanWs()
             }
             script {
+                def apps = readJSON file: "dynatrace_applications.json"
+                withCredentials([
+                    string(credentialsId: 'DT_TOKEN', variable: 'DT_TOKEN')
+                ]) {
+                    apps.each { app ->
+                        def payload = [
+                            eventType : "CUSTOM_INFO",
+                            title : "APPLICATION HEALTH STATUS",
+                            properties : app
+                        ]
+                        writeFile(
+                            file: "dt_payload.json",
+                            text: JsonOutput.toJson(payload)
+                        )
+                        sh """
+                        curl --fail -X POST 'https://lpi52873.live.dynatrace.com/api/v2/events/ingest' \
+                        -H 'Authorization: Api-Token ${DT_TOKEN}' \
+                        -H 'Content-Type: application/json' \
+                        --data @dt_payload.json
+                        """
+                    }
+                }
+
                 def currentTimestamp = java.time.LocalDateTime.now()
                 def data = [
                     "event_tag":"build_report",
