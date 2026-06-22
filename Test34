@@ -1,0 +1,17 @@
+if (-not $Global:ScriptFailed -and $ReconnectSeconds) {
+
+    $metricLine = "custom.vpn.reconnect.duration,vpn=$VpnName,host=$env:COMPUTERNAME $ReconnectSeconds"
+
+    $headers = @{
+        Authorization = "Api-Token $token"
+        "Content-Type" = "text/plain"
+    }
+
+    Invoke-RestMethod `
+        -Uri "https://lpi52873.live.dynatrace.com/api/v2/metrics/ingest" `
+        -Method Post `
+        -Headers $headers `
+        -Body $metricLine
+
+    Write-Log "Reconnect duration metric uploaded: $ReconnectSeconds seconds"
+}
