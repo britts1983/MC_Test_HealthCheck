@@ -1,4 +1,359 @@
-if (-not $Global:ScriptFailed -and $ReconnectSeconds) {
+$VpnName = "AXA_VPN_25"
+$VpnHost = "rasaxa3.axa.co.jp"
+$CiscoVpnCli = "C:\Program Files (x86)\Cisco\Cisco AnyConnect Secure Mobility Client\vpncli.exe"
+$CiscoVpnUi = "C:\Program Files (x86)\Cisco\Cisco AnyConnect Secure Mobility Client\vpnui.exe"
+$VpnPassword = "2913Kuttuichu@"
+$InternalTestHost = "confluence.axa.com"
+$WaitSeconds = 60
+$LogDir = "C:\Users\he.vpn.ose\Documents\VpnTest\logs"
+$TestSSID ="Galaxy S25 Ultra B150"
+$BackUPSSID = "CoreConnect"
+#Declarations
+
+$Global:ScriptFailed = $false
+$Global:FailedStep = "N/A"
+
+if (!(Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$logFile = Join-Path $LogDir "vpn-healthcheck-$timestamp.log"
+
+function Write-Log {
+    param([string]$Message)
+    $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formattedLine = "{0,-22} | {1}" -f $time, $Message
+    Write-Host $formattedLine
+    [System.IO.File]::AppendAllText(
+        $logFile,
+        "$formattedLine`r`n",
+        [System.Text.Encoding]::UTF8
+    )
+}
+
+function Connect-Wifi {
+    param($SSID)
+    Write-Log "Connecting to WiFi: $SSID"
+    netsh wlan connect name="$SSID"
+    Start-Sleep -Seconds 15
+}
+
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Command,
+        [string]$StepName,
+        [int]$MaxAttempts = 2,
+        [int]$DelaySeconds = 30
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Command
+            return
+        }
+        catch {
+            Write-Log "$StepName failed on attempt $attempt"
+            if ($attempt -lt $MaxAttempts) {
+                Write-Log "Retrying $StepName after $DelaySeconds seconds..."
+                Start-Sleep -Seconds $DelaySeconds
+            }
+            else {
+                throw
+            }
+        }
+    }
+}
+
+
+function Send-DynatraceLog {
+    try {
+        $tokenFile = "C:\Users\he.vpn.ose\Documents\VpnTest\temp\dynatrace.token"
+	if (!(Test-Path $tokenFile)) {
+   	 Write-Log "Dynatrace token file not found."
+  	 return
+	}
+
+	$token = Get-Content $tokenFile -Raw
+	$token = $token.Trim()
+	$logContent = Get-Content $logFile -Raw
+        $result = "SUCCESS"
+        $logLevel = "INFO"
+
+        if ($Global:ScriptFailed -eq $true) {
+            $result = "ERROR"
+            $logLevel = "SEVERE"
+        }
+
+        Write-Log "Uploading to Dynatrace"
+        Write-Log "Payload result: $result"
+        Write-Log "Failed step: $Global:FailedStep"
+        $payload = @(
+            @{
+                content     = $logContent
+                source      = "vpn-healthcheck"
+                vpn_name    = $VpnName
+                vpn_host    = $VpnHost
+                result      = $result
+                Error_details = $Global:FailedStep
+                loglevel    = $logLevel
+                host        = $env:COMPUTERNAME
+                environment = "POC"
+            }
+        ) | ConvertTo-Json -Depth 5
+
+        $headers = @{
+            Authorization  = "Api-Token $token"
+            "Content-Type" = "application/json"
+        }
+
+        Invoke-RestMethod `
+            -Uri "https://lpi52873.live.dynatrace.com/api/v2/logs/ingest" `
+            -Method Post `
+            -Headers $headers `
+            -Body $payload
+
+        Write-Log "Dynatrace log upload successful."
+    }
+    catch {
+        Write-Log "Dynatrace upload failed"
+        Write-Log $_.Exception.Message
+
+        if ($_.ErrorDetails.Message) {
+            Write-Log $_.ErrorDetails.Message
+        }
+    }
+}
+
+function Send-DynatraceMetric {
+    param(
+        [int]$Value,
+        [string]$Result
+    )
+
+    try {
+        $tokenFile = "C:\Users\he.vpn.ose\Documents\VpnTest\temp\dynatrace.token"
+
+        $token = (Get-Content $tokenFile -Raw).Trim()
+
+        $metricLine = "custom.vpn.healthcheck,status=$Result,vpn=$VpnName,host=$env:COMPUTERNAME $Value"
+
+        $headers = @{
+            Authorization = "Api-Token $token"
+            "Content-Type" = "text/plain"
+        }
+
+        Invoke-RestMethod `
+            -Uri "https://lpi52873.live.dynatrace.com/api/v2/metrics/ingest" `
+            -Method Post `
+            -Headers $headers `
+            -Body $metricLine
+
+        Write-Log "Metric uploaded: $metricLine"
+    }
+    catch {
+        Write-Log "Metric upload failed"
+        Write-Log $_.Exception.Message
+    }
+}
+
+function Fail-Step {
+    param(
+        [string]$StepName,
+        [string]$Message
+    )
+
+    $Global:ScriptFailed = $true
+    $Global:FailedStep = $StepName
+    Write-Log "FAILED: $StepName - $Message"
+    throw "$StepName failed. $Message"
+}
+
+function Test-Step {
+    param(
+        [string]$Name,
+        [scriptblock]$Command
+    )
+
+    Write-Log "START: $Name"
+    try {
+        & $Command
+        Write-Log "PASS: $Name"
+    }
+    catch {
+        Fail-Step -StepName $Name -Message $_.Exception.Message
+    }
+}
+
+function Get-VpnStatus {
+    $output = & $CiscoVpnCli state | Out-String
+    Write-Log $output
+    if ($output -match "state:\s+Connected") {
+        return "Connected"
+    }
+    return "Disconnected"
+}
+function Connect-Vpn {
+    Add-Type -AssemblyName System.Windows.Forms
+    Write-Log "Launching Cisco AnyConnect"
+    Start-Process $CiscoVpnUi
+    Start-Sleep -Seconds 3
+    $wshell = New-Object -ComObject WScript.Shell
+    $wshell.AppActivate("Cisco AnyConnect")
+    Start-Sleep -Seconds 2
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    Start-Sleep -Seconds 2
+    [System.Windows.Forms.SendKeys]::SendWait($VpnPassword)
+    Start-Sleep -Milliseconds 500
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    Start-Sleep -Seconds 2
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    Start-Sleep -Seconds 20
+    $status = Get-VpnStatus
+    if ($status -ne "Connected") {
+        throw "Cisco VPN connection failed"
+    }
+    Write-Log "Cisco VPN connected successfully."
+}
+
+function Get-CurrentSSID {
+    $ssid = netsh wlan show interfaces |
+        Select-String "^\s*SSID\s*:"
+    return ($ssid -split ":")[1].Trim()
+}
+
+function Disconnect-Vpn {
+    Write-Log "Disconnecting Cisco VPN"
+    & $CiscoVpnCli disconnect
+    Start-Sleep -Seconds 10
+    Write-Log "Cisco VPN disconnected successfully."
+}
+$currentSSID = Get-CurrentSSID
+
+Write-Log "Current SSID: $currentSSID"
+
+if ($currentSSID -ne $TestSSID) {
+    Write-Log "Switching to $TestSSID"
+    netsh wlan disconnect
+    Start-Sleep -Seconds 5
+    netsh wlan connect name="$TestSSID"
+    Start-Sleep -Seconds 15
+}
+
+
+Write-Log "VPN HEALTH CHECK STARTED"
+Write-Log "VPN Name : $VpnName"
+Write-Log "VPN Host : $VpnHost"
+Write-Log "Internal Test Host : $InternalTestHost"
+Write-Log "Wait Seconds : $WaitSeconds"
+
+try {
+    
+
+    Test-Step "VPN connect" {
+    $status = Get-VpnStatus
+    if ($status -eq "Connected") {
+        Write-Log "VPN already connected. Skipping connection step."
+
+    }
+    else {
+        Invoke-WithRetry -StepName "VPN Connect" -Command {
+            Connect-Vpn
+            $status = Get-VpnStatus
+            	if ($status -ne "Connected") {
+                throw "VPN not connected"
+           	 }
+       	    }
+   	  }
+    }
+
+
+    Write-Log "Waiting for $WaitSeconds seconds to simulate real user session..."
+    Start-Sleep -Seconds $WaitSeconds
+    Test-Step "Internal access validation after wait period" {
+    	$result = Test-NetConnection $InternalTestHost -Port 443
+    		if ($result.TcpTestSucceeded -ne $true) {
+       		 throw "Internal access failed after wait period"
+   	 	}
+	}
+
+
+    Test-Step "Internal access validation to $InternalTestHost" {
+        $result = Test-NetConnection $InternalTestHost -Port 443
+        if ($result.TcpTestSucceeded -ne $true) {
+            throw "Internal access validation failed"
+        }
+    }
+
+    Test-Step "VPN disconnect" {
+        Disconnect-Vpn
+    }
+   
+    Test-Step "Internal access should fail after disconnect" {
+    $result = Test-NetConnection $InternalTestHost -Port 443
+    if ($result.TcpTestSucceeded -eq $true) {
+        throw "Internal resource still reachable after disconnect"
+    	}
+    }
+
+    $ReconnectStart = Get-Date
+
+    Test-Step "VPN reconnect" {
+        Invoke-WithRetry -StepName "VPN Reconnect" -Command {
+        Connect-Vpn
+         }
+    }
+   $ReconnectEnd = Get-Date
+   $ReconnectSeconds = ($ReconnectStart-$ReconnectEnd).TotalSeconds
+
+   Write-Log "VPN Reconnect Duration:$ReconnectSeconds seconds"
+    
+   Test-Step "Internal access validation after reconnect" {
+        $result = Test-NetConnection $InternalTestHost -Port 443
+        if ($result.TcpTestSucceeded -ne $true) {
+            throw "Internal access validation failed after reconnect"
+        }
+    }
+ Write-Log "Waiting for After Reconnect..."
+ Start-Sleep -Seconds 30
+
+   Test-Step "VPN stability validation after reconnect" {
+        $result = Test-NetConnection $InternalTestHost -Port 443
+        if ($result.TcpTestSucceeded -ne $true) {
+            throw "VPN Unstable after reconnect"
+        }
+    }
+}
+
+catch {
+    Write-Log "SCRIPT FAILED"
+    Write-Log $_.Exception.Message
+}
+
+finally {
+
+    Write-Log "Log captured at: $logFile"
+
+    if ($Global:ScriptFailed) {
+        Write-Log "VPN test failed. Connecting to CoreConnect."
+        Invoke-WithRetry StepName "CoreConnect" -Command{
+        Connect-Wifi $BackupSSID
+        $CurrentSSID = Get-CurrentSSID
+        if ($CurrentSSID -ne $BackupSSID){
+         throw "Failed to connect $BackupSSID"
+          }
+       }a
+        Start-Sleep -Seconds 10
+    }
+
+    Send-DynatraceLog
+   if ($Global:ScriptFailed) {
+      Send-DynatraceMetric -Value 0 -Result "FAILED"
+     }
+   else {
+     Send-DynatraceMetric -Value 1 -Result "SUCCESS"
+    }
+
+   if (-not $Global:ScriptFailed -and $ReconnectSeconds) {
 
     $metricLine = "custom.vpn.reconnect.duration,vpn=$VpnName,host=$env:COMPUTERNAME $ReconnectSeconds"
 
@@ -14,4 +369,31 @@ if (-not $Global:ScriptFailed -and $ReconnectSeconds) {
         -Body $metricLine
 
     Write-Log "Reconnect duration metric uploaded: $ReconnectSeconds seconds"
+   }
+    Write-Log "Dynatrace Log Completed."
+
+    if ($Global:ScriptFailed) {
+        Write-Log "Switching back to VPN-Test."
+        Connect-Wifi $TestSSID
+    }
+
+    if ($Global:ScriptFailed -eq $true) {
+        Write-Log "VPN HEALTH CHECK COMPLETED WITH ERROR"
+        exit 1
+    }
+    else {
+        Write-Log "VPN HEALTH CHECK COMPLETED SUCCESSFULLY"
+        exit 0
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
