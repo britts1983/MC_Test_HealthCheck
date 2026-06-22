@@ -1,0 +1,10 @@
+while ($true) {
+
+    Write-Host "Starting run at $(Get-Date)"
+
+    & "C:\Users\he.vpn.ose\Documents\VpnTest\VPN_HealthCheck.ps1"
+
+    Write-Host "Waiting 5 minutes..."
+
+    Start-Sleep -Seconds 300
+}
