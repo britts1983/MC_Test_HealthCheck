@@ -1,0 +1,45 @@
+function Send-DynatraceMetric {
+    param(
+        [int]$Value,
+        [string]$Result
+    )
+
+    try {
+        $tokenFile = "C:\Users\he.vpn.ose\Documents\VpnTest\temp\dynatrace.token"
+
+        $token = (Get-Content $tokenFile -Raw).Trim()
+
+        $metricLine = "custom.vpn.healthcheck,status=$Result,vpn=$VpnName,host=$env:COMPUTERNAME $Value"
+
+        $headers = @{
+            Authorization = "Api-Token $token"
+            "Content-Type" = "text/plain"
+        }
+
+        Invoke-RestMethod `
+            -Uri "https://lpi52873.live.dynatrace.com/api/v2/metrics/ingest" `
+            -Method Post `
+            -Headers $headers `
+            -Body $metricLine
+
+        Write-Log "Metric uploaded: $metricLine"
+    }
+    catch {
+        Write-Log "Metric upload failed"
+        Write-Log $_.Exception.Message
+    }
+}
+
+
+Send-DynatraceLog
+
+if ($Global:ScriptFailed) {
+    Send-DynatraceMetric -Value 0 -Result "FAILED"
+}
+else {
+    Send-DynatraceMetric -Value 1 -Result "SUCCESS"
+}
+
+Write-Log "Dynatrace Log Completed."
+
+
