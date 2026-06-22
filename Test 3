@@ -1,10 +1,13 @@
-$VpnName = "AXA_JP VPN"
-$VpnHost = "AXA-JP.WEVPN.AXA.COM"
-$InternetTestHost = "google.com"
+$VpnName = "AXA_VPN_25"
+$VpnHost = "rasaxa3.axa.co.jp"
+$CiscoVpnCli = "C:\Program Files (x86)\Cisco\Cisco AnyConnect Secure Mobility Client\vpncli.exe"
+$CiscoVpnUi = "C:\Program Files (x86)\Cisco\Cisco AnyConnect Secure Mobility Client\vpnui.exe"
+$VpnPassword = "2913Kuttuichu@"
 $InternalTestHost = "confluence.axa.com"
 $WaitSeconds = 60
-$LogDir = "C:\jenkins\vpn-monitor\logs"
-
+$LogDir = "C:\Users\he.vpn.ose\Documents\VpnTest\logs"
+$TestSSID ="VPN-Test"
+$BackUPSSID = "CoreConnect"
 #Declarations
 
 $Global:ScriptFailed = $false
@@ -27,6 +30,13 @@ function Write-Log {
         "$formattedLine`r`n",
         [System.Text.Encoding]::UTF8
     )
+}
+
+function Connect-Wifi {
+    param($SSID)
+    Write-Log "Connecting to WiFi: $SSID"
+    netsh wlan connect name="$SSID"
+    Start-Sleep -Seconds 15
 }
 
 function Invoke-WithRetry {
@@ -57,16 +67,15 @@ function Invoke-WithRetry {
 
 function Send-DynatraceLog {
     try {
-        Import-Module CredentialManager -ErrorAction SilentlyContinue
-        $credential = Get-StoredCredential -Target "DynatraceLogIngest"
-        if ($null -eq $credential) {
-            Write-Log "Dynatrace credential not found in Windows Credential Manager."
-            return
-        }
+        $tokenFile = "C:\Users\he.vpn.ose\Documents\VpnTest\temp\dynatrace.token"
+	if (!(Test-Path $tokenFile)) {
+   	 Write-Log "Dynatrace token file not found."
+  	 return
+	}
 
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credential.Password)
-        $token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-        $logContent = Get-Content $logFile -Raw
+	$token = Get-Content $tokenFile -Raw
+	$token = $token.Trim()
+	$logContent = Get-Content $logFile -Raw
         $result = "SUCCESS"
         $logLevel = "INFO"
 
@@ -134,7 +143,6 @@ function Test-Step {
     )
 
     Write-Log "START: $Name"
-
     try {
         & $Command
         Write-Log "PASS: $Name"
@@ -145,82 +153,108 @@ function Test-Step {
 }
 
 function Get-VpnStatus {
-    $vpn = Get-VpnConnection -Name $VpnName -ErrorAction Stop
-    return $vpn.ConnectionStatus
+    $output = & $CiscoVpnCli state | Out-String
+    Write-Log $output
+    if ($output -match "state:\s+Connected") {
+        return "Connected"
+    }
+    return "Disconnected"
 }
-
 function Connect-Vpn {
-    Write-Log "Connecting VPN: $VpnName"
-    rasdial "$VpnName"
+    Add-Type -AssemblyName System.Windows.Forms
+    Write-Log "Launching Cisco AnyConnect"
+    Start-Process $CiscoVpnUi
+    Start-Sleep -Seconds 3
+    $wshell = New-Object -ComObject WScript.Shell
+    $wshell.AppActivate("Cisco AnyConnect")
+    Start-Sleep -Seconds 2
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    Start-Sleep -Seconds 2
+    [System.Windows.Forms.SendKeys]::SendWait($VpnPassword)
+    Start-Sleep -Milliseconds 500
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    Start-Sleep -Seconds 2
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
     Start-Sleep -Seconds 20
     $status = Get-VpnStatus
-
     if ($status -ne "Connected") {
-        throw "VPN connection failed. Current status: $status"
+        throw "Cisco VPN connection failed"
     }
+    Write-Log "Cisco VPN connected successfully."
+}
 
-    Write-Log "VPN connected successfully."
+function Get-CurrentSSID {
+    $ssid = netsh wlan show interfaces |
+        Select-String "^\s*SSID\s*:"
+    return ($ssid -split ":")[1].Trim()
 }
 
 function Disconnect-Vpn {
-    Write-Log "Disconnecting VPN: $VpnName"
-    rasdial "$VpnName" /disconnect
-    Start-Sleep -Seconds 5
-    $status = Get-VpnStatus
-    if ($status -ne "Disconnected") {
-        throw "VPN disconnect failed. Current status: $status"
-    }
-
-    Write-Log "VPN disconnected successfully."
+    Write-Log "Disconnecting Cisco VPN"
+    & $CiscoVpnCli disconnect
+    Start-Sleep -Seconds 10
+    Write-Log "Cisco VPN disconnected successfully."
 }
+$currentSSID = Get-CurrentSSID
+Write-Log "Current SSID before switch: $currentSSID"
+if ($currentSSID -ne $TestSSID) {
+
+    Write-Log "SSID is not $TestSSID. Switching Wi-Fi..."
+    netsh wlan disconnect
+    Start-Sleep -Seconds 5
+    netsh wlan connect name="$TestSSID"
+    Start-Sleep -Seconds 15
+    $newSSID = Get-CurrentSSID
+    Write-Log "Current SSID after switch: $newSSID"
+    if ($newSSID -ne $TestSSID) {
+        Write-Log "WARNING: Failed to switch to $TestSSID"
+    }
+    else {
+        Write-Log "Successfully switched to $TestSSID"
+    }
+}
+else {
+    Write-Log "Already connected to $TestSSID"
+}
+
+
 
 Write-Log "VPN HEALTH CHECK STARTED"
 Write-Log "VPN Name : $VpnName"
 Write-Log "VPN Host : $VpnHost"
-Write-Log "Internet Test Host : $InternetTestHost"
 Write-Log "Internal Test Host : $InternalTestHost"
 Write-Log "Wait Seconds : $WaitSeconds"
 
 try {
-    Test-Step "Internet connectivity check to $InternetTestHost" {
-        $result = Test-NetConnection $InternetTestHost -Port 443
-        if ($result.TcpTestSucceeded -ne $true) {
-            throw "Internet connectivity failed"
-        }
-    }
-
-    Test-Step "DNS resolution check for VPN hostname" {
-        Resolve-DnsName $VpnHost -ErrorAction Stop | Out-Null
-    }
+    
 
     Test-Step "VPN connect" {
+    $status = Get-VpnStatus
+    if ($status -eq "Connected") {
+        Write-Log "VPN already connected. Skipping connection step."
+
+    }
+    else {
         Invoke-WithRetry -StepName "VPN Connect" -Command {
-        Connect-Vpn
-        }
+            Connect-Vpn
+            $status = Get-VpnStatus
+            	if ($status -ne "Connected") {
+                throw "VPN not connected"
+           	 }
+       	    }
+   	  }
     }
 
-
-    Test-Step "Authentication validation" {
-        $status = Get-VpnStatus
-        if ($status -ne "Connected") {
-            throw "VPN authentication/session failed"
-        }
-    }
-
-    Test-Step "VPN session status check" {
-        $status = Get-VpnStatus
-        Write-Log "VPN session status: $status"
-    }
 
     Write-Log "Waiting for $WaitSeconds seconds to simulate real user session..."
     Start-Sleep -Seconds $WaitSeconds
-    Test-Step "Session persistence validation" {
-        $status = Get-VpnStatus
+    Test-Step "Internal access validation after wait period" {
+    	$result = Test-NetConnection $InternalTestHost -Port 443
+    		if ($result.TcpTestSucceeded -ne $true) {
+       		 throw "Internal access failed after wait period"
+   	 	}
+	}
 
-        if ($status -ne "Connected") {
-            throw "VPN session dropped during wait period"
-        }
-    }
 
     Test-Step "Internal access validation to $InternalTestHost" {
         $result = Test-NetConnection $InternalTestHost -Port 443
@@ -232,6 +266,15 @@ try {
     Test-Step "VPN disconnect" {
         Disconnect-Vpn
     }
+   
+    Test-Step "Internal access should fail after disconnect" {
+    $result = Test-NetConnection $InternalTestHost -Port 443
+    if ($result.TcpTestSucceeded -eq $true) {
+        throw "Internal resource still reachable after disconnect"
+    	}
+    }
+
+
 
     Test-Step "VPN reconnect" {
         Invoke-WithRetry -StepName "VPN Reconnect" -Command {
@@ -239,26 +282,28 @@ try {
          }
     }
 
-
-    Test-Step "Reconnect validation" {
-        Invoke-WithRetry -StepName "Reconnect Validation" -Command {
-            $status = Get-VpnStatus
-            if ($status -ne "Connected") {
-                throw "Reconnect validation failed. Status: $status"
-            }
-            Write-Log "VPN reconnect validation successful."
-        }
-    }
-
 }
+
 catch {
     Write-Log "SCRIPT FAILED"
     Write-Log $_.Exception.Message
 }
+
 finally {
+
     Write-Log "Log captured at: $logFile"
+    if ($Global:ScriptFailed) {
+        Write-Log "VPN test failed. Connecting to CoreConnect."
+        Connect-Wifi $BackupSSID
+        Start-Sleep -Seconds 10
+    }
+
     Send-DynatraceLog
     Write-Log "Dynatrace Log Completed."
+    if ($Global:ScriptFailed) {
+        Write-Log "Switching back to VPN-Test."
+        Connect-Wifi $TestSSID
+    }
 
     if ($Global:ScriptFailed -eq $true) {
         Write-Log "VPN HEALTH CHECK COMPLETED WITH ERROR"
@@ -269,3 +314,4 @@ finally {
         exit 0
     }
 }
+
