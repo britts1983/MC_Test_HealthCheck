@@ -295,6 +295,15 @@ Test-Step "VPN disconnect" {
     Disconnect-Vpn
 }
 
+Test-Step "Internal access should fail after disconnect" {
+    $result = Test-NetConnection $InternalTestHost -Port 443
+
+    if ($result.TcpTestSucceeded -eq $true) {
+        throw "Internal resource still reachable after disconnect"
+    }
+}
+
+
 # 11. VPN reconnect
 Test-Step "VPN reconnect" {
     Connect-Vpn
@@ -311,6 +320,26 @@ Test-Step "Reconnect validation" {
     Write-Log "VPN reconnect validation successful."
 }
 
+Test-Step "Internal access validation after reconnect" {
+    $result = Test-NetConnection $InternalTestHost -Port 443
+
+    if ($result.TcpTestSucceeded -ne $true) {
+        throw "Internal access failed after reconnect"
+    }
+}
+
+Write-Log "Waiting 30 seconds after reconnect..."
+Start-Sleep -Seconds 30
+
+Test-Step "VPN stability validation after reconnect" {
+    $status = Get-VpnStatus
+
+    if ($status -ne "Connected") {
+        throw "VPN unstable after reconnect"
+    }
+}
+
+
 # 13. Log capture
 Write-Log "Log captured at: $logFile"
 
@@ -318,6 +347,7 @@ Write-Log "Log captured at: $logFile"
 Send-LogToDynatrace
 
 # 15. Alert trigger validation
+Send-DynatraceMetric -Value 1 -Result "SUCCESS"
 Write-Log "Alert trigger validation: Dynatrace alert should be based on status=FAILED or custom.vpn.healthcheck status=FAILED."
 Write-Log "===== VPN HEALTH CHECK COMPLETED SUCCESSFULLY ====="
 
