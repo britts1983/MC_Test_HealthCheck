@@ -3,7 +3,7 @@ Import-Module CredentialManager
 param(
     [string]$VpnName = "AXA_JP VPN",
     [string]$VpnHost = "AXA-JP.WEVPN.AXA.COM",
-    [string]$InternetTestHost = "google.com",
+    [string]$InternetTestHost = "googlea.com",
     [string]$InternalTestHost = "confluence.axa.com",
     [string]$InternalDnsHost = "confluence.axa.com",
     [int]$WaitSeconds = 30,
@@ -24,6 +24,34 @@ $logFile = Join-Path $LogDir "vpn-healthcheck-$timestamp.log"
 
 $ScriptStatus = "SUCCESS"
 $FailureReason = ""
+$TestSSID = "VPN-Test2"
+$BackupSSID = "CoreConnect"
+
+function Get-CurrentSSID {
+    $ssid = netsh wlan show interfaces |
+        Select-String "^\s*SSID\s*:"
+
+    if ($ssid) {
+        return ($ssid -split ":")[1].Trim()
+    }
+
+    return ""
+}
+
+function Connect-Wifi {
+    param([string]$SSID)
+
+    Write-Log "Connecting to WiFi: $SSID"
+
+    netsh wlan disconnect | Out-Null
+    Start-Sleep 5
+
+    netsh wlan connect name="$SSID" | Out-Null
+    Start-Sleep 20
+}
+
+
+
 
 function Write-Log {
     param([string]$Message)
@@ -120,17 +148,24 @@ function Send-DynatraceMetric {
 
 function Fail-Step {
     param([string]$Message)
-
     $global:ScriptStatus = "FAILED"
     $global:FailureReason = $Message
-
     Write-Log "FAILED: $Message"
+    Write-Log "Switching to CoreConnect..."
+    Connect-Wifi $BackupSSID
+    $currentSSID = Get-CurrentSSID
+    if ($currentSSID -eq $BackupSSID) {
+        Write-Log "Connected to CoreConnect successfully."
+    }
+    else {
+        Write-Log "Failed to connect to CoreConnect."
+    }
 
     Send-LogToDynatrace
     Send-DynatraceMetric -Value 0 -Result "FAILED"
-
     exit 1
 }
+
 
 function Test-Step {
     param(
@@ -199,6 +234,63 @@ function Disconnect-Vpn {
     Write-Log "VPN disconnected successfully."
 }
 
+function Send-ReconnectMetric {
+    param([double]$ReconnectSeconds)
+
+    try {
+        $credential = Get-StoredCredential -Target "DynatraceLogIngest"
+
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credential.Password)
+        $token = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($BSTR)
+
+        $metricLine = "custom.vpn.reconnect.duration,vpn=$VpnName,host=$env:COMPUTERNAME $ReconnectSeconds"
+
+        $headers = @{
+            Authorization = "Api-Token $token"
+            "Content-Type" = "text/plain"
+        }
+
+        Invoke-RestMethod `
+            -Uri "$DynatraceTenantUrl/api/v2/metrics/ingest" `
+            -Method Post `
+            -Headers $headers `
+            -Body $metricLine
+
+        Write-Log "Reconnect duration metric uploaded."
+    }
+    catch {
+        Write-Log "Reconnect duration metric upload failed: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Command,
+        [string]$StepName,
+        [int]$MaxAttempts = 2,
+        [int]$DelaySeconds = 30
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Command
+            return
+        }
+        catch {
+            Write-Log "$StepName failed on attempt $attempt"
+
+            if ($attempt -lt $MaxAttempts) {
+                Start-Sleep -Seconds $DelaySeconds
+            }
+            else {
+                throw
+            }
+        }
+    }
+}
+
+
+
 Write-Log "===== VPN HEALTH CHECK STARTED ====="
 Write-Log "VPN Name : $VpnName"
 Write-Log "VPN Host : $VpnHost"
@@ -208,7 +300,25 @@ Write-Log "Internal DNS Host : $InternalDnsHost"
 Write-Log "Wait Seconds : $WaitSeconds"
 Write-Log "Log File : $logFile"
 
-# 1. Internet connectivity
+$currentSSID = Get-CurrentSSID
+if ($currentSSID -ne $TestSSID) {
+    Connect-Wifi $TestSSID
+    Start-Sleep 20
+    $currentSSID = Get-CurrentSSID
+    if ($currentSSID -ne $TestSSID) {
+        Write-Log "Retrying $TestSSID WiFi..."
+        Connect-Wifi $TestSSID
+        Start-Sleep 20
+        $currentSSID = Get-CurrentSSID
+        if ($currentSSID -ne $TestSSID) {
+            Fail-Step "Unable to connect to $TestSSID WiFi."
+        }
+    }
+}
+
+
+
+#  Internet connectivity
 Test-Step "Internet connectivity check to $InternetTestHost" {
     $result = Test-NetConnection $InternetTestHost -Port 443
     if ($result.TcpTestSucceeded -ne $true) {
@@ -216,12 +326,12 @@ Test-Step "Internet connectivity check to $InternetTestHost" {
     }
 }
 
-# 2. DNS resolution
+# DNS resolution
 Test-Step "DNS resolution check for VPN hostname $VpnHost" {
     Resolve-DnsName $VpnHost -ErrorAction Stop | Out-Null
 }
 
-# 3. VPN gateway reachability
+# VPN gateway reachability
 Test-Step "VPN gateway reachability check to $VpnHost" {
     $result = Test-NetConnection $VpnHost -Port 443
     if ($result.TcpTestSucceeded -ne $true) {
@@ -229,12 +339,12 @@ Test-Step "VPN gateway reachability check to $VpnHost" {
     }
 }
 
-# 4. VPN connect
+# VPN connect
 Test-Step "VPN connect" {
     Connect-Vpn
 }
 
-# 5. Authentication validation
+# Authentication validation
 Test-Step "Authentication validation" {
     $status = Get-VpnStatus
     if ($status -ne "Connected") {
@@ -243,7 +353,7 @@ Test-Step "Authentication validation" {
 }
 
 
-# 6. Session status validation
+# Session status validation
 Test-Step "Session status validation" {
     $status = Get-VpnStatus
     Write-Log "VPN session status: $status"
@@ -253,7 +363,7 @@ Test-Step "Session status validation" {
     }
 }
 
-# 7. Internal application access
+# Internal application access
 if ($InternalTestHost -ne "REPLACE_INTERNAL_HOST_OR_IP") {
     Test-Step "Internal application access validation to $InternalTestHost" {
         $result = Test-NetConnection $InternalTestHost -Port 443
@@ -266,7 +376,7 @@ else {
     Write-Log "SKIPPED: Internal application access. Internal host not configured."
 }
 
-# 8. Internal DNS validation
+# Internal DNS validation
 if ($InternalDnsHost -ne "REPLACE_INTERNAL_HOST_OR_IP") {
     Test-Step "Internal DNS validation for $InternalDnsHost" {
         Resolve-DnsName $InternalDnsHost -ErrorAction Stop | Out-Null
@@ -276,7 +386,7 @@ else {
     Write-Log "SKIPPED: Internal DNS validation. Internal DNS host not configured."
 }
 
-# 9. Wait/session persistence
+# Wait/session persistence
 Write-Log "Waiting for $WaitSeconds seconds to simulate real user session..."
 Start-Sleep -Seconds $WaitSeconds
 
@@ -290,7 +400,7 @@ Test-Step "Session persistence validation" {
     Write-Log "VPN remained connected during wait period."
 }
 
-# 10. VPN disconnect
+#  VPN disconnect
 Test-Step "VPN disconnect" {
     Disconnect-Vpn
 }
@@ -304,12 +414,18 @@ Test-Step "Internal access should fail after disconnect" {
 }
 
 
-# 11. VPN reconnect
+# VPN reconnect
+$ReconnectStart = Get-Date
 Test-Step "VPN reconnect" {
     Connect-Vpn
 }
+$ReconnectEnd = Get-Date
+$ReconnectSeconds = ($ReconnectEnd - $ReconnectStart).TotalSeconds
 
-# 12. Reconnect validation
+Write-Log "VPN Reconnect Duration: $ReconnectSeconds seconds"
+
+
+# Reconnect validation
 Test-Step "Reconnect validation" {
     $status = Get-VpnStatus
 
@@ -340,14 +456,15 @@ Test-Step "VPN stability validation after reconnect" {
 }
 
 
-# 13. Log capture
+# Log capture
 Write-Log "Log captured at: $logFile"
 
-# 14. Dynatrace log upload
+# Dynatrace log upload
 Send-LogToDynatrace
 
-# 15. Alert trigger validation
+# Alert trigger validation
 Send-DynatraceMetric -Value 1 -Result "SUCCESS"
+Send-ReconnectMetric -ReconnectSeconds $ReconnectSeconds
 Write-Log "Alert trigger validation: Dynatrace alert should be based on status=FAILED or custom.vpn.healthcheck status=FAILED."
 Write-Log "===== VPN HEALTH CHECK COMPLETED SUCCESSFULLY ====="
 
